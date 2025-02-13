@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<robot name="ball">
+  <link name="ball">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <sphere radius="0.01"/>
+      </geometry>
+      <material name="ping_pong_ball_material"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <sphere radius="0.01"/>
+      </geometry>
+      <material name="ping_pong_ball_material">
+        <friction>
+          <ode>
+            <mu value="0.8"/>
+          </ode>
+        </friction>
+        <restitution value="0.9"/>
+      </material>
+    </collision>
+    <inertial>
+      <mass value="0.005"/>
+      <inertia ixx="0.00008333" ixy="0.0" ixz="0.0" iyy="0.00008333" iyz="0.0" izz="0.00008333"/>
+    </inertial>
+  </link>
+</robot>
