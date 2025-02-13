@@ -24,7 +24,7 @@ import torch
 import random
 
 initial_speed_range = (4.8, 6.5)  # 初速度范围 (单位: 米/秒)
-tilt_angle_range = (-10.0, 10.0)  # 倾斜角范围 (单位: 度)
+tilt_angle_range = (-5.0, 5.0)  # 倾斜角范围 (单位: 度)
 
 origin_robot1_pose = torch.tensor([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0])
 origin_robot2_pose = torch.tensor([3.5, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0])
@@ -54,17 +54,11 @@ def generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range):
     
 
 def reset_ids(env_ids, root_state_tensor, initial_speed_range, tilt_angle_range):
-    """
-    Reset the positions and velocities of both ping pong balls in all environments.
-    
-    :param root_state_tensor: The root state tensor containing actor data.
-    :param initial_speed_range: The range of initial speeds for the balls.
-    :param tilt_angle_range: The range of initial tilt angles for the balls.
-    """
+
     # for i in range(num_envs):
     # root_state_tensor[env_ids, 0, 0:7] = origin_robot1_pose
     # root_state_tensor[env_ids, 1, 0:7] = origin_robot2_pose
-    root_state_tensor[env_ids, 2, 0:7] = origin_pingpong_table_pose
+    # root_state_tensor[env_ids, 2, 0:7] = origin_pingpong_table_pose
     root_state_tensor[env_ids, 3, 0:7] = origin_ball1_pose
     root_state_tensor[env_ids, 4, 0:7] = origin_ball2_pose
 
@@ -88,7 +82,6 @@ def reset_ids(env_ids, root_state_tensor, initial_speed_range, tilt_angle_range)
     gym.set_actor_root_state_tensor_indexed(sim, root_tensor, gymtorch.unwrap_tensor(actor_indices), len(actor_indices))
 
 
-
 def check_reset(env_ids, root_state_tensor, depth_threshold=0.05):
     """
     Check if any of the ping pong balls have fallen below the threshold.
@@ -105,7 +98,7 @@ def check_reset(env_ids, root_state_tensor, depth_threshold=0.05):
     # print(ball1_z)
     
     # If both balls are below the threshold, return True (reset needed)
-    if ball1_z < depth_threshold or ball2_z < depth_threshold:
+    if ball1_z < depth_threshold and ball2_z < depth_threshold:
         return True
     return False
 
@@ -319,18 +312,18 @@ for i in range(num_envs):
     pose.p = gymapi.Vec3(0.0, 0.0, 1.0)
     pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
-    actor_handle = gym.create_actor(env, asset, pose, "actor", i, 1)
+    actor_handle = gym.create_actor(env, asset, pose, "actor", i, 0)
     actor_handles.append(actor_handle)
 
     # set default DOF positions
-    # gym.set_actor_dof_states(env, actor_handle, dof_states, gymapi.STATE_ALL)
+    gym.set_actor_dof_states(env, actor_handle, dof_states, gymapi.STATE_ALL)
 
     # add actor
     pose = gymapi.Transform()
     pose.p = gymapi.Vec3(3.5, 0.0, 1.0)
     pose.r = gymapi.Quat(0.0, 0.0, 1.0, 0.0)
 
-    actor_handle = gym.create_actor(env, asset, pose, "actor", i, 2)
+    actor_handle = gym.create_actor(env, asset, pose, "actor", i, 0)
     actor_handles.append(actor_handle)
 
     # set default DOF positions
@@ -341,7 +334,7 @@ for i in range(num_envs):
     pose.p = gymapi.Vec3(1.7, 0.0, 0.0)
     pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
-    actor_handle = gym.create_actor(env, asset_pingpong, pose, "actor", i, 3)
+    actor_handle = gym.create_actor(env, asset_pingpong, pose, "actor", i, 0)
     actor_handles.append(actor_handle)
 
     # add ball 1
@@ -349,7 +342,7 @@ for i in range(num_envs):
     pose.p = gymapi.Vec3(0.3, 0.5, 1.3)
     pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0) # 没有旋转
 
-    actor_handle = gym.create_actor(env, asset_pingpong_ball, pose, "actor", i, 4)
+    actor_handle = gym.create_actor(env, asset_pingpong_ball, pose, "actor", i, 0)
     actor_handles.append(actor_handle)
 
     # add ball 2
@@ -357,36 +350,22 @@ for i in range(num_envs):
     pose.p = gymapi.Vec3(2.9, 0.0, 1.3)
     pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0) # 没有旋转
 
-    actor_handle = gym.create_actor(env, asset_pingpong_ball, pose, "actor", i, 5)
+    actor_handle = gym.create_actor(env, asset_pingpong_ball, pose, "actor", i, 0)
     actor_handles.append(actor_handle)
 
-# # 初始化root_state_tensor
-# # 在所有actor创建后，添加模拟步骤
-# gym.simulate(sim)
-# root_tensor = gym.acquire_actor_root_state_tensor(sim)
-# root_state_tensor_origin = gymtorch.wrap_tensor(root_tensor)
-# # print("root_state_tensor.shape=", root_state_tensor_origin.shape)
-# root_state_tensor = root_state_tensor_origin.view(num_envs, -1, 13)
-# # print("root_state_tensor.shape=", root_state_tensor.shape)
-
-# for i in range(num_envs):
-#     print("root_state_tensor [", i, "] = ", root_state_tensor[i])
-
-# 设置初速度函数
+# set up the balls' initial speed and tilt angle
 def set_velocity(root_state_tensor):
-    # 存储pingpong_ball初始速度
-    ball_velocities = torch.zeros((num_envs, 2, 3), dtype=torch.float)
 
+    ball_velocities = torch.zeros((num_envs, 2, 3), dtype=torch.float)
         
-    # 设置每个env中的第4,5个物体的初速度
+    # set ball 1&2's initial speed and tilt angle for each env
     for i in range(num_envs):
-        # 初始化球的位置，给定初速度和倾斜角
+
         ball_velocities_1, ball_velocities_2 = generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range)
         
         ball_velocities[i, 0] = ball_velocities_1
         ball_velocities[i, 1] = ball_velocities_2
 
-    # 将速度更新到root_state_tensor中
     for i in range(num_envs):
         # # 取出根状态数据
         # root_state = gymtorch.wrap_tensor(gym.acquire_actor_root_state_tensor(sim))
@@ -426,6 +405,7 @@ while not gym.query_viewer_has_closed(viewer):
     gym.simulate(sim)
 
     gym.refresh_actor_root_state_tensor(sim)
+
     root_tensor = gym.acquire_actor_root_state_tensor(sim)
     root_state_tensor_origin = gymtorch.wrap_tensor(root_tensor)
     # print("root_state_tensor.shape=", root_state_tensor_origin.shape)
@@ -434,8 +414,8 @@ while not gym.query_viewer_has_closed(viewer):
         set_velocity(root_state_tensor)
 
     gym.fetch_results(sim, True)
-    # 刷新actor的根状态
-    gym.refresh_actor_root_state_tensor(sim)
+
+    # gym.refresh_actor_root_state_tensor(sim)
     
     # if frame_count > 5:
     for i, env in enumerate(envs):
@@ -444,17 +424,18 @@ while not gym.query_viewer_has_closed(viewer):
         # print(f"check = {check}")
         if check:  # [i] 传入单一的env_id
             print(f"Environment {i} needs to be reset.")
-            # 如果需要重置，调用reset_ids函数
             reset_ids([i], root_state_tensor, initial_speed_range, tilt_angle_range)
 
-    # 更新渲染
+    # update the viewer
     gym.step_graphics(sim)
     gym.draw_viewer(viewer, sim, True)
 
-    # 同步物理和图形时间
+    # Wait for dt to elapse in real time.
+    # This synchronizes the physics simulation with the rendering rate.
     gym.sync_frame_time(sim)
-    print("frame_count = ", frame_count)
+
     frame_count += 1
+    print("frame_count = ", frame_count)
 
 
 # motion_data = np.load('/home/jiangnan/IsaacGym_Preview_4_Package/IsaacGymEnvs-main/assets/amp/motions/amp_humanoid_cartwheel.npy', allow_pickle=True).item()
