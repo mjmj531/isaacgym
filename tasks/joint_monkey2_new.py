@@ -322,7 +322,8 @@ for i in range(num_envs):
     pose = gymapi.Transform()
     pose.p = gymapi.Vec3(3.5, 0.0, 1.0)
     pose.r = gymapi.Quat(0.0, 0.0, 1.0, 0.0)
-
+    
+    # param6: bit collision
     actor_handle = gym.create_actor(env, asset, pose, "actor", i, 0)
     actor_handles.append(actor_handle)
 
