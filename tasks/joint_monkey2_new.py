@@ -39,9 +39,9 @@ def generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range):
     # ball_velocities = torch.zeros((num_envs, 2, 3))  # 速度 (vx, vy, vz)
     # 初始化球的位置，给定初速度和倾斜角
     speed_1 = random.uniform(*initial_speed_range)
-    print("i=", i, "speed=", speed_1)
+    # print("i=", i, "speed=", speed_1)
     tilt_angle_1 = random.uniform(*tilt_angle_range)
-    print("i=", i, "tilt_angle=", tilt_angle_1)
+    # print("i=", i, "tilt_angle=", tilt_angle_1)
     velocity_1 = gymapi.Vec3(speed_1 * math.cos(math.radians(tilt_angle_1)), speed_1 * math.sin(math.radians(tilt_angle_1)), 0.0)
     ball_velocities_1 = torch.tensor([velocity_1.x, velocity_1.y, velocity_1.z  # 速度 (vx, vy, vz)
                                         ])
@@ -62,22 +62,15 @@ def reset_ids(env_ids, root_state_tensor, initial_speed_range, tilt_angle_range)
     :param tilt_angle_range: The range of initial tilt angles for the balls.
     """
     # for i in range(num_envs):
-    root_state_tensor[env_ids, 0, 0:7] = origin_robot1_pose
-    root_state_tensor[env_ids, 1, 0:7] = origin_robot2_pose
+    # root_state_tensor[env_ids, 0, 0:7] = origin_robot1_pose
+    # root_state_tensor[env_ids, 1, 0:7] = origin_robot2_pose
     root_state_tensor[env_ids, 2, 0:7] = origin_pingpong_table_pose
     root_state_tensor[env_ids, 3, 0:7] = origin_ball1_pose
     root_state_tensor[env_ids, 4, 0:7] = origin_ball2_pose
 
     # Randomize speed and tilt angle for both balls
     ball_velocities_1, ball_velocities_2 = generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range)
-    # speed = random.uniform(*initial_speed_range)
-    # tilt_angle = random.uniform(*tilt_angle_range)
 
-    # # Calculate velocities for both balls
-    # velocity1 = gymapi.Vec3(speed * math.cos(math.radians(tilt_angle)),
-    #                         speed * math.sin(math.radians(tilt_angle)), 0.0)
-    # velocity2 = gymapi.Vec3(-speed * math.cos(math.radians(tilt_angle)),
-    #                         -speed * math.sin(math.radians(tilt_angle)), 0.0)
 
     # Update ball 1 position and velocity (index 4)
     root_state_tensor[env_ids, 3, 0:7] = origin_ball1_pose
@@ -109,7 +102,7 @@ def check_reset(env_ids, root_state_tensor, depth_threshold=0.05):
     # Get the height (z) position of ball 1 and ball 2
     ball1_z = root_state_tensor[env_ids, 3, 2]  # Ball 1 is at index 3
     ball2_z = root_state_tensor[env_ids, 4, 2]  # Ball 2 is at index 4
-    print(ball1_z)
+    # print(ball1_z)
     
     # If both balls are below the threshold, return True (reset needed)
     if ball1_z < depth_threshold or ball2_z < depth_threshold:
@@ -389,15 +382,8 @@ def set_velocity(root_state_tensor):
     for i in range(num_envs):
         # 初始化球的位置，给定初速度和倾斜角
         ball_velocities_1, ball_velocities_2 = generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range)
-        # speed_1 = random.uniform(*initial_speed_range)
-        # print("i=", i, "speed=", speed_1)
-        # tilt_angle_1 = random.uniform(*tilt_angle_range)
-        # print("i=", i, "tilt_angle=", tilt_angle_1)
-        # velocity_1 = gymapi.Vec3(speed_1 * math.cos(math.radians(tilt_angle_1)), speed_1 * math.sin(math.radians(tilt_angle_1)), 0.0)
+        
         ball_velocities[i, 0] = ball_velocities_1
-        # speed_2 = -random.uniform(*initial_speed_range)
-        # tilt_angle_2 = random.uniform(*tilt_angle_range)
-        # velocity_2 = gymapi.Vec3(speed_2 * math.cos(math.radians(tilt_angle_2)), speed_2 * math.sin(math.radians(tilt_angle_2)), 0.0)
         ball_velocities[i, 1] = ball_velocities_2
 
     # 将速度更新到root_state_tensor中
@@ -406,11 +392,9 @@ def set_velocity(root_state_tensor):
         # root_state = gymtorch.wrap_tensor(gym.acquire_actor_root_state_tensor(sim))
         
         # 更新ball 1的速度
-        # ball1_idx = 3 + i * 5  # 计算第4个物体的索引
         root_state_tensor[i, 3, 7:10] = ball_velocities[i, 0]
         
         # 更新ball 2的速度
-        # ball2_idx = 4 + i * 5  # 计算第5个物体的索引
         root_state_tensor[i, 4, 7:10] = ball_velocities[i, 1]
 
         print("root_state_tensor[", i, "] = ", root_state_tensor[i])
