@@ -1,0 +1,134 @@
+git config --global user.name "mjmj531" git config --global user.email "ma-j22@mails.tsinghua.edu.cn"
+
+乒乓球弹性系数
+胳膊动 其余fix
+how many activated dofs?
+
+DOF_Names = ['left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint', 
+             'left_knee_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint', 
+             'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint', 
+             'right_knee_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint', 
+             'waist_yaw_joint', 'waist_roll_joint', 'waist_pitch_joint', 'left_shoulder_pitch_joint', 
+             'left_shoulder_roll_joint', 'left_shoulder_yaw_joint', 'left_elbow_joint', 
+             'left_wrist_roll_joint', 'left_wrist_pitch_joint', 'left_wrist_yaw_joint', 
+             'right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_shoulder_yaw_joint', 
+             'right_elbow_joint', 'right_wrist_roll_joint', 'right_wrist_pitch_joint', 'right_wrist_yaw_joint'] # 29
+
+//
+
+new_dof_names = ['left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint', 'left_knee_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint', 'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint', 'right_knee_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint', 'left_shoulder_pitch_joint', 'left_shoulder_roll_joint', 'left_shoulder_yaw_joint', 'left_elbow_joint', 'left_wrist_roll_joint', 'left_wrist_pitch_joint', 'left_wrist_yaw_joint', 'right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_shoulder_yaw_joint', 'right_elbow_joint', 'right_wrist_roll_joint', 'right_wrist_pitch_joint', 'right_wrist_yaw_joint'] # 26
+
+# 40
+bodies_name = ['pelvis', 'imu_in_pelvis', 'left_hip_pitch_link', 'left_hip_roll_link', 'left_hip_yaw_link', 'left_knee_link', 'left_ankle_pitch_link', 'left_ankle_roll_link', 'pelvis_contour_link', 'right_hip_pitch_link', 'right_hip_roll_link', 'right_hip_yaw_link', 'right_knee_link', 'right_ankle_pitch_link', 'right_ankle_roll_link', 'waist_yaw_link', 'waist_roll_link', 'torso_link', 'd435_link', 'head_link', 'imu_in_torso', 'left_shoulder_pitch_link', 'left_shoulder_roll_link', 'left_shoulder_yaw_link', 'left_elbow_link', 'left_wrist_roll_link', 'left_wrist_pitch_link', 'left_wrist_yaw_link', 'left_rubber_hand', 'logo_link', 'mid360_link', 'right_shoulder_pitch_link', 'right_shoulder_roll_link', 'right_shoulder_yaw_link', 'right_elbow_link', 'right_wrist_roll_link', 'right_wrist_pitch_link', 'right_wrist_yaw_link', 'right_rubber_hand', 'pingpong_paddle']
+
+pelvis
+imu_in_pelvis
+left_hip_pitch_link
+left_hip_roll_link
+left_hip_yaw_link
+left_knee_link
+left_ankle_pitch_link
+left_ankle_roll_link
+pelvis_contour_link
+right_hip_pitch_link
+right_hip_roll_link
+right_hip_yaw_link
+right_knee_link
+right_ankle_pitch_link
+right_ankle_roll_link
+waist_yaw_link
+waist_roll_link
+torso_link
+d435_link
+head_link
+imu_in_torso
+left_shoulder_pitch_link
+left_shoulder_roll_link
+left_shoulder_yaw_link
+left_elbow_link
+left_wrist_roll_link
+left_wrist_pitch_link
+left_wrist_yaw_link
+left_rubber_hand
+logo_link
+mid360_link
+right_shoulder_pitch_link
+right_shoulder_roll_link
+right_shoulder_yaw_link
+right_elbow_link
+right_wrist_roll_link
+right_wrist_pitch_link
+right_wrist_yaw_link
+right_rubber_hand
+pingpong_paddle
+
+# reset positions
+def reset_positions():
+    defaults = np.zeros(num_dofs)
+    speeds = np.zeros(num_dofs)
+    for i in range(num_dofs):
+        dof_positions[i] = defaults[i]
+        speeds[i] = 0.0
+
+
+def reset_ids(i, env_ids, root_state_tensor, initial_speed_range, tilt_angle_range):
+
+    # root_state_tensor[env_ids, 0, 0:7] = origin_robot1_pose
+    # root_state_tensor[env_ids, 1, 0:7] = origin_robot2_pose
+    # root_state_tensor[env_ids, 2, 0:7] = origin_pingpong_table_pose
+
+    # Randomize speed and tilt angle for both balls
+    ball_velocities_1, ball_velocities_2 = generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range)
+
+    # Update ball 1 position and velocity (index 4)
+    root_state_tensor[env_ids, 3, 0:7] = origin_ball1_pose
+    root_state_tensor[env_ids, 3, 7:10] = ball_velocities_1
+
+    # Update ball 2 position and velocity (index 5)
+    root_state_tensor[env_ids, 4, 0:7] = origin_ball2_pose
+    root_state_tensor[env_ids, 4, 7:10] = ball_velocities_2
+
+    # Refresh actor root state after reset
+    # gym.refresh_actor_root_state_tensor(sim)
+    # gym.set_actor_root_state_tensor(sim, gymtorch.unwrap_tensor(root_state_tensor))
+    all_actor_indices = torch.arange(5 * num_envs, dtype=torch.int32).view(num_envs, 5)
+    actor_indices = all_actor_indices[env_ids].flatten()
+    gym.set_actor_root_state_tensor_indexed(sim, root_tensor, gymtorch.unwrap_tensor(actor_indices), len(actor_indices))
+    
+    # 如何把robot归位
+    # initialize_dof_states()
+    reset_positions()
+    gym.set_actor_dof_states(env, robot1_handle, dof_states, gymapi.STATE_ALL)
+
+
+def check_reset(env_ids, root_state_tensor, depth_threshold=0.05):
+    """
+    Check if any of the ping pong balls have fallen below the threshold.
+    If both balls are below the threshold, return True (needs reset).
+    
+    :param root_state_tensor: The root state tensor containing actor data (positions and velocities).
+    :param depth_threshold: The threshold for the ball to reset (height below this value).
+    :return: Boolean value indicating whether a reset is required.
+    """
+    # for i in range(num_envs):
+    # Get the height (z) position of ball 1 and ball 2
+    ball1_z = root_state_tensor[env_ids, 3, 2]  # Ball 1 is at index 3
+    ball2_z = root_state_tensor[env_ids, 4, 2]  # Ball 2 is at index 4
+    # print(ball1_z)
+    
+    # If both balls are below the threshold, return True (reset needed)
+    if ball1_z < depth_threshold and ball2_z < depth_threshold:
+        return True
+    return False
+    
+    
+    
+ reset_buf
+ def reset_idx(self, env_ids):
+    num_resets = len(env_ids)
+    self.root_states[env_ids] = self.initial_root_states[env_ids]
+    self.gym.set_actor_root_state_tensor_indexed(self.sim, self.root_tensor, gymtorch.unwrap_tensor(actor_indices), num_resets)
+    self.reset_buf[env_ids] = 0
+    self.progress_buf[env_ids] = 0
+    
+    
