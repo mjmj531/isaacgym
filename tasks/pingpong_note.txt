@@ -1,5 +1,10 @@
 git config --global user.name "mjmj531" git config --global user.email "ma-j22@mails.tsinghua.edu.cn"
 
+我现在想挑选出一组tensor数据中的其中几个。
+假设等待挑选的tensor为：tensor([ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17,
+        18, 19], device='cuda:0')，挑选规则为：根据env_ids: tensor([1, 2, 4], device='cuda:0')，挑选出五个为一组的第1,2,4组，即返回tensortensor([ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 16, 17,
+        18, 19], device='cuda:0'),请问应该如何写代码？
+
 乒乓球弹性系数
 胳膊动 其余fix
 how many activated dofs?
@@ -18,8 +23,19 @@ DOF_Names = ['left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint'
 
 new_dof_names = ['left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint', 'left_knee_joint', 'left_ankle_pitch_joint', 'left_ankle_roll_joint', 'right_hip_pitch_joint', 'right_hip_roll_joint', 'right_hip_yaw_joint', 'right_knee_joint', 'right_ankle_pitch_joint', 'right_ankle_roll_joint', 'left_shoulder_pitch_joint', 'left_shoulder_roll_joint', 'left_shoulder_yaw_joint', 'left_elbow_joint', 'left_wrist_roll_joint', 'left_wrist_pitch_joint', 'left_wrist_yaw_joint', 'right_shoulder_pitch_joint', 'right_shoulder_roll_joint', 'right_shoulder_yaw_joint', 'right_elbow_joint', 'right_wrist_roll_joint', 'right_wrist_pitch_joint', 'right_wrist_yaw_joint'] # 26
 
+right_arm_dof_names = [
+    "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint",
+    "right_elbow_joint",
+    "right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint"
+]
+
 # 40
 bodies_name = ['pelvis', 'imu_in_pelvis', 'left_hip_pitch_link', 'left_hip_roll_link', 'left_hip_yaw_link', 'left_knee_link', 'left_ankle_pitch_link', 'left_ankle_roll_link', 'pelvis_contour_link', 'right_hip_pitch_link', 'right_hip_roll_link', 'right_hip_yaw_link', 'right_knee_link', 'right_ankle_pitch_link', 'right_ankle_roll_link', 'waist_yaw_link', 'waist_roll_link', 'torso_link', 'd435_link', 'head_link', 'imu_in_torso', 'left_shoulder_pitch_link', 'left_shoulder_roll_link', 'left_shoulder_yaw_link', 'left_elbow_link', 'left_wrist_roll_link', 'left_wrist_pitch_link', 'left_wrist_yaw_link', 'left_rubber_hand', 'logo_link', 'mid360_link', 'right_shoulder_pitch_link', 'right_shoulder_roll_link', 'right_shoulder_yaw_link', 'right_elbow_link', 'right_wrist_roll_link', 'right_wrist_pitch_link', 'right_wrist_yaw_link', 'right_rubber_hand', 'pingpong_paddle']
+
+
+get_actor_rigid_shape_properties
+factory_env_gears 
+
 
 pelvis
 imu_in_pelvis
@@ -130,5 +146,20 @@ def check_reset(env_ids, root_state_tensor, depth_threshold=0.05):
     self.gym.set_actor_root_state_tensor_indexed(self.sim, self.root_tensor, gymtorch.unwrap_tensor(actor_indices), num_resets)
     self.reset_buf[env_ids] = 0
     self.progress_buf[env_ids] = 0
-    
-    
+   
+   
+cfg/train/HumanoidPingpongG1PPO.yaml
+cfg/task/HumanoidPingpongG1.yaml
+
+isaacgymenvs/tasks/humanoid_interos_edit_pingpong.py
+assets/mjcf/pingpong_paddle
+assets/mjcf/g1_29dof_rev_1_0_pingpong_fixed_except_right_arm.urdf
+
+assets/urdf/pingpong_table.urdf
+assets/urdf/small_ball.urdf
+assets/urdf/pingpong_table
+
+
+torchrun --standalone --nnodes=1 --nproc_per_node=7 train.py multi_gpu=True task=HumanoidPingpongG1 experiment='G1_pingpong' headless=true force_render=false
+
+python train.py task=HumanoidPingpongG1 experiment='G1_pingpong' test=true task.env.numEnvs=1
