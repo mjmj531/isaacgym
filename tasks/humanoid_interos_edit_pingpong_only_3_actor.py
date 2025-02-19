@@ -95,7 +95,7 @@ class HumanoidPingpong(VecTask):
         self.targets = None
         ###################################
         
-        self.cfg["env"]["numObservations"] = 19
+        self.cfg["env"]["numObservations"] = 80 # 30+30+7+7+3+3
 
         # num_dofs
         self.cfg["env"]["numActions"] = 7
@@ -133,21 +133,25 @@ class HumanoidPingpong(VecTask):
         self.all_actor_indices = to_torch(self.actor_handles, dtype=torch.long, device=self.device)
         # print("self.all_actor_indices.shape", self.all_actor_indices.shape)
         # print("self.all_actor_indices.dtype", self.all_actor_indices.dtype)
+
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_rigid_body_state_tensor(self.sim)
+        self.gym.refresh_force_sensor_tensor(self.sim)
+        self.gym.refresh_dof_force_tensor(self.sim)
+        self.gym.refresh_net_contact_force_tensor(self.sim)
 
         # dof force
         self.dof_force_tensor = gymtorch.wrap_tensor(dof_force_tensor).view(self.num_envs, self.dofs_per_env)
 
         ### !!!!!!!!!!!!!!!!!!!!! ###
-        # body_states = self.gym.acquire_rigid_body_state_tensor(self.sim)
-        # self.body_states_id = self.cfg["env"].get("bodyStatesId", None)
-        # self.body_states_id = to_torch(self.body_states_id, dtype=torch.long, device=self.device)
-        # if self.body_states_id is not None:
-        #     self.body_states = gymtorch.wrap_tensor(body_states).view(self.num_envs, self.num_bodies, 13)
-        # else:
-        #     self.body_states = gymtorch.wrap_tensor(body_states).view(self.num_envs, self.num_bodies, 13)
+        body_states = self.gym.acquire_rigid_body_state_tensor(self.sim)
+        self.body_states_id = self.cfg["env"].get("bodyStatesId", None)
+        self.body_states_id = to_torch(self.body_states_id, dtype=torch.long, device=self.device)
+        if self.body_states_id is not None:
+            self.body_states = gymtorch.wrap_tensor(body_states).view(self.num_envs, self.num_humanoid_bodies+2, 13)
+        else:
+            self.body_states = gymtorch.wrap_tensor(body_states).view(self.num_envs, self.num_humanoid_bodies+2, 13)
 
         # rigid body state tensors
         self.rb_states = gymtorch.wrap_tensor(_rb_states)
@@ -417,7 +421,6 @@ class HumanoidPingpong(VecTask):
         # self.gym.create_asset_force_sensor(humanoid_asset, left_foot_idx, sensor_pose)
 
 
-        ##### now no use, so:
         # self.body_states_id = to_torch(self.cfg["env"]["bodyStatesId"], dtype=torch.long, device=self.device)
         # self.feet_mask = torch.zeros_like(self.body_states_id, dtype=torch.bool, device=self.device)
         # if self.is_g1:
@@ -713,13 +716,14 @@ class HumanoidPingpong(VecTask):
 
     def compute_reward(self, actions):
         self.rew_buf[:], self.reset_buf[:] = compute_pingpong_reward(
+            self.humanoid1_root_states,
             self.humanoid1_paddle_rb_states,
             self.ball2_root_states,
             self.dof_force_tensor,
             self.dof_vel,
             self.reset_buf,
             self.progress_buf,
-            self.max_episode_length
+            self.max_episode_length,
         )
 
         # self.rew_buf[:], self.reset_buf[:]  = compute_imitation_reward(self.root_states, self.body_states, self.dof_pos, self.dof_vel, self.ref_body_states, self.ref_dof_pos, self.ref_dof_vel, self.progress_buf, self.dof_force_tensor, self.body_states_id, self.feet_mask, self.is_g1, self.is_train)
@@ -749,14 +753,19 @@ class HumanoidPingpong(VecTask):
         # # self_obs = compute_humanoid_observations(self.body_states, self.dof_pos, self.dof_vel, self.body_states_id)
         # self.obs_buf[:] = torch.cat([imi_obs, imi_obs_fut, height_obs, self_obs], dim=-1)
 
-         self.obs_buf[:]= compute_pingpong_observations(
-            self.obs_buf,
-            self.humanoid1_paddle_rb_states,
-            self.humanoid1_paddle_rb_states,
-            self.ball2_root_states,
-            self.actions,
-            self.dt
+        pingpong_obs = compute_pingpong_observations(
+            self.body_states,
+            self.body_states_id,
+            self.ball2_root_states
         )
+
+        humanoid_obs = compute_humanoid_observations(
+            self.body_states, 
+            self.dof_pos, 
+            self.dof_vel, 
+            self.body_states_id
+        )
+        self.obs_buf[:] = torch.cat([humanoid_obs, pingpong_obs], dim=-1)
 
     def refresh_sim_tensors(self):
         self.gym.refresh_dof_state_tensor(self.sim)
@@ -974,12 +983,16 @@ class HumanoidPingpong(VecTask):
         # force_tensor = gymtorch.unwrap_tensor(forces)
         # self.gym.set_dof_actuation_force_tensor(self.sim, force_tensor)
 
+        # self.pre_ball2_root_states = self.ball2_root_states.clone()
+
     def post_physics_step(self):
         self.progress_buf += 1
         # print("progress_buf: ", self.progress_buf)
         self.randomize_buf += 1
 
         self.refresh_sim_tensors()
+
+        # self.post_ball2_root_states = self.ball2_root_states.clone()
 
         self.compute_reward(self.actions)  # R t
 
@@ -1055,22 +1068,33 @@ class HumanoidPingpong(VecTask):
 ###=========================jit functions=========================###
 #####################################################################
 
-@torch.jit.script
+# @torch.jit.script
 def compute_pingpong_reward(
+    humanoid1_root_states, 
     humanoid1_paddle_rb_states, 
     ball2_root_states, 
     dof_force_tensor, dof_vel, 
     reset_buf, progress_buf, 
-    max_episode_length,
+    max_episode_length
     ):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float) -> Tuple[Tensor, Tensor]
+    # # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float) -> Tuple[Tensor, Tensor]
     
     threshold = 0.1  # 乒乓球掉落高度阈值
+    alpha = 0.3  # 乒乓球反方向速度奖励系数
 
     # compute the distance between the humanoid's right hand and the pingpong ball
     humanoid1_paddle_position = humanoid1_paddle_rb_states[..., 0:3] 
     ball2_root_state_position = ball2_root_states[..., 0:3]
-    # ball2_velocity = ball2_root_states[..., 7:10]
+
+    # # ball velocity change
+    # pre_ball2_velocity_x = pre_ball2_root_states[..., 7]
+    # ball2_velocity_x = ball2_root_states[..., 7]
+    # ball2_acceleration_x = (ball2_velocity_x - pre_ball2_velocity_x) / dt
+
+    # keep the ball in front of the humanoid
+    ball2_position_x = ball2_root_state_position[..., 0]
+    humanoid1_position_x = humanoid1_root_states[..., 0]
+    front_reward = 1.0 / (1.0 + torch.abs(ball2_position_x - humanoid1_position_x))
 
     dist1 = torch.sqrt((humanoid1_paddle_position[..., 0] - ball2_root_state_position[..., 0]) ** 2 +
                         (humanoid1_paddle_position[..., 1] - ball2_root_state_position[..., 1]) ** 2 +
@@ -1078,13 +1102,20 @@ def compute_pingpong_reward(
 
     pos_reward1 = 1.0 / (1.0 + 1.5 * dist1 * dist1)  # humanoid1 和 ball2 之间的奖励
 
-    # print("len(pos_reward1):", len(pos_reward1))
-
     # for i in range(len(pos_reward1)):
     #     if ball2_root_state_position[i, 0] > 1.75:
     #         pos_reward1[i] = 0.0
 
-    # pos_reward = pos_reward1 + pos_reward2
+    # ball2 velocity change
+    ball2_velocity_x = ball2_root_states[..., 7]
+    velocity_reward = torch.zeros_like(ball2_velocity_x)
+    for i in range(len(ball2_velocity_x)):
+        if ball2_velocity_x[i] > 0:
+            velocity_reward[i] = alpha * abs(ball2_velocity_x[i])
+
+    # if ball2_velocity_x > 0:
+    #     velocity_reward = alpha * abs(ball2_velocity_x)
+
     power_coefficient = 0.0005  #0.0005
     power = torch.abs(torch.multiply(dof_force_tensor, dof_vel)).sum(dim=-1)
     power_reward = -power_coefficient * power
@@ -1094,16 +1125,8 @@ def compute_pingpong_reward(
     # alive_reward = torch.ones_like(potentials) * 2.0
     # progress_reward = potentials - prev_potentials
 
-    # # ball velocity change
-    # ball1_velocity_x_change = torch.abs(ball1_velocity[..., 0] - ball1_velocity[..., 0].detach())  # 球1的x方向速度变化
-    # ball2_velocity_x_change = torch.abs(ball2_velocity[..., 0] - ball2_velocity[..., 0].detach())  # 球2的x方向速度变化
-
-    # speed_reward1 = ball1_velocity_x_change * 0.1  
-    # speed_reward2 = ball2_velocity_x_change * 0.1  
-    # speed_reward = speed_reward1 + speed_reward2
-
     # all rewards
-    reward1 = pos_reward1 + power_reward
+    reward1 = pos_reward1 + power_reward + velocity_reward
     
     # 重置条件
     ones = torch.ones_like(reset_buf) # 全1
@@ -1118,60 +1141,6 @@ def compute_pingpong_reward(
     #     print("resetting envs")
     
     return reward1, reset
-
-# @torch.jit.script
-def compute_pingpong_observations(obs_buf, humanoid1_root_states, 
-                                  humanoid1_paddle_rb_states, 
-                                  ball2_root_states,
-                                  actions, dt):
-    
-    # # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float) -> Tensor
-
-    # humanoid1
-    # humanoid1_torso_position = humanoid1_root_states[..., 0:3]
-    humanoid1_paddle_position = humanoid1_paddle_rb_states[..., 0:3] 
-    humanoid1_paddle_velocity = humanoid1_paddle_rb_states[..., 7:10]
-    humanoid1_obs = torch.cat((humanoid1_paddle_position, humanoid1_paddle_velocity), dim=-1) # shape: (num_envs, 6)
-
-    # ball2
-    ball2_root_state_position = ball2_root_states[..., 0:3]
-    ball2_root_state_velocity = ball2_root_states[..., 7:10]
-    ball2_obs = torch.cat((ball2_root_state_position, ball2_root_state_velocity), dim=-1) # shape: (num_envs, 6)
-
-    # # humanoid2
-    # # humanoid2_paddle_position = humanoid2_paddle_rb_states[..., 0:3]
-    # humanoid2_paddle_position = humanoid2_paddle_rb_states[..., 0:3]
-    # humanoid2_paddle_velocity = humanoid2_paddle_rb_states[..., 7:10]
-    # humanoid2_obs = torch.cat((humanoid2_paddle_position, humanoid2_paddle_velocity), dim=-1)
-
-    # # ball1
-    # ball1_root_state_position = ball1_root_states[:, 0:3]  
-    # ball1_root_state_velocity = ball1_root_states[:, 7:10] 
-    # ball1_obs = torch.cat((ball1_root_state_position, ball1_root_state_velocity), dim=-1)
-
-    # to_target_1 = (ball2_root_state_position - humanoid1_paddle_position)
-    # to_target_1[:, 2] = 0
-
-    # to_target_2 = (humanoid2_paddle_position- ball1_root_state_position)
-    # to_target_2[:, 2] = 0
-
-    # prev_potentials_new = potentials.clone()
-    # potentials = -torch.norm(to_target_1+to_target_2, p=2, dim=-1) / dt
-
-    # combine
-    # obs_buf shapes: 3, 3, 3, 3, 3, 3, 3, 3, num_acts (num_dofs*2)
-
-    # humanoid1_paddle_position: 3   0:3
-    # humanoid1_paddle_velocity: 3   3:6
-    # ball2_root_state_position: 3   6:9
-    # ball2_root_state_velocity: 3   9:12
-    # actions: 7   12:19
-    # all: 19
-    obs = torch.cat((
-        humanoid1_obs, ball2_obs, actions
-    ), dim=-1)
-
-    return obs
 
 # @torch.jit.script
 def compute_imitation_reward(root_states, body_states, dof_pos, dof_vel, ref_body_states, ref_dof_pos, ref_dof_vel, progress_buf, dof_force_tensor, body_states_id=None, feet_mask=None, is_g1=False, is_train=True):
@@ -1292,6 +1261,39 @@ def compute_imitation_reward(root_states, body_states, dof_pos, dof_vel, ref_bod
     return reward, reset
 
 
+def compute_pingpong_observations(body_states, 
+                                  body_states_id, 
+                                  ball2_root_states,
+                                  is_g1 = False):
+    
+    # pingpong ball --> pelvis pos and vel
+    ball2_pos = ball2_root_states[..., 0:3]
+    ball2_vel = ball2_root_states[..., 7:10]
+
+    body_pos = body_states[:, body_states_id, 0:3]
+    body_rot = body_states[:, body_states_id, 3:7]
+    body_vel = body_states[:, body_states_id, 7:10]
+
+    # B, J, _ = body_pos.shape
+
+    root_pos = body_pos[:, 0, :]
+    root_rot = body_rot[:, 0, :]
+
+    heading_rot_inv = calc_heading_quat_inv(root_rot)
+
+    # root_pos_expanded = root_pos.unsqueeze(1).expand_as(ball2_pos)  # [num_envs, 3]
+    relative_ball2_pos = ball2_pos - root_pos  # [num_envs, 3]
+
+    local_ball2_pos = my_quat_rotate(heading_rot_inv, relative_ball2_pos)  # [num_envs, 3]
+    local_ball2_vel = my_quat_rotate(heading_rot_inv, ball2_vel)  # [num_envs, 3]
+
+    obs = torch.cat((
+        local_ball2_pos, local_ball2_vel
+    ), dim=-1)
+
+    return obs
+
+
 def compute_humanoid_observations(body_states, dof_pos, dof_vel, body_states_id, is_g1=False):
 
     body_pos = body_states[:, body_states_id, 0:3]
@@ -1315,18 +1317,20 @@ def compute_humanoid_observations(body_states, dof_pos, dof_vel, body_states_id,
     local_body_pos = my_quat_rotate(flat_heading_rot_inv, (body_pos - root_pos.unsqueeze(1)).view(B * J, -1)).reshape(B, -1)
     local_body_vel = my_quat_rotate(flat_heading_rot_inv, body_vel.view(B * J, -1)).reshape(B, -1)
 
-    flat_body_rot = body_rot.reshape(B * J, -1)  # This is global rotation of the body
-    flat_local_body_rot = quat_mul(flat_heading_rot_inv, flat_body_rot)
-    flat_local_body_rot_obs = quat_to_tan_norm(flat_local_body_rot)
-    local_body_rot_obs = flat_local_body_rot_obs.reshape(B, -1)
+    # flat_body_rot = body_rot.reshape(B * J, -1)  # This is global rotation of the body
+    # flat_local_body_rot = quat_mul(flat_heading_rot_inv, flat_body_rot)
+    # flat_local_body_rot_obs = quat_to_tan_norm(flat_local_body_rot)
+    # local_body_rot_obs = flat_local_body_rot_obs.reshape(B, -1)
 
     obs_list = []
     # obs_list.append(root_h.clone())
+
     obs_list.append(local_body_pos)
     obs_list.append(local_body_vel)
     obs_list.append(dof_pos.clone())
     obs_list.append(dof_vel.clone() * 0.1)
-    obs_list += [local_body_rot_obs[:, :6]]
+
+    # obs_list += [local_body_rot_obs[:, :6]]
 
     obs = torch.cat(obs_list, dim=-1)
     return obs
