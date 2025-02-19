@@ -718,6 +718,7 @@ class HumanoidPingpong(VecTask):
         self.rew_buf[:], self.reset_buf[:] = compute_pingpong_reward(
             self.humanoid1_root_states,
             self.humanoid1_paddle_rb_states,
+            self.pre_ball2_root_states,
             self.ball2_root_states,
             self.dof_force_tensor,
             self.dof_vel,
@@ -983,7 +984,7 @@ class HumanoidPingpong(VecTask):
         # force_tensor = gymtorch.unwrap_tensor(forces)
         # self.gym.set_dof_actuation_force_tensor(self.sim, force_tensor)
 
-        # self.pre_ball2_root_states = self.ball2_root_states.clone()
+        self.pre_ball2_root_states = self.ball2_root_states.clone()
 
     def post_physics_step(self):
         self.progress_buf += 1
@@ -1072,6 +1073,7 @@ class HumanoidPingpong(VecTask):
 def compute_pingpong_reward(
     humanoid1_root_states, 
     humanoid1_paddle_rb_states, 
+    pre_ball2_root_states, 
     ball2_root_states, 
     dof_force_tensor, dof_vel, 
     reset_buf, progress_buf, 
@@ -1080,21 +1082,21 @@ def compute_pingpong_reward(
     # # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float) -> Tuple[Tensor, Tensor]
     
     threshold = 0.1  # 乒乓球掉落高度阈值
-    alpha = 0.3  # 乒乓球反方向速度奖励系数
+    alpha = 10  # 乒乓球反方向速度奖励系数
 
     # compute the distance between the humanoid's right hand and the pingpong ball
     humanoid1_paddle_position = humanoid1_paddle_rb_states[..., 0:3] 
     ball2_root_state_position = ball2_root_states[..., 0:3]
 
     # # ball velocity change
-    # pre_ball2_velocity_x = pre_ball2_root_states[..., 7]
+    pre_ball2_velocity_x = pre_ball2_root_states[..., 7]
     # ball2_velocity_x = ball2_root_states[..., 7]
     # ball2_acceleration_x = (ball2_velocity_x - pre_ball2_velocity_x) / dt
 
-    # keep the ball in front of the humanoid
-    ball2_position_x = ball2_root_state_position[..., 0]
-    humanoid1_position_x = humanoid1_root_states[..., 0]
-    front_reward = 1.0 / (1.0 + torch.abs(ball2_position_x - humanoid1_position_x))
+    # # keep the ball in front of the humanoid
+    # ball2_position_x = ball2_root_state_position[..., 0]
+    # humanoid1_position_x = humanoid1_root_states[..., 0]
+    # front_reward = 1.0 / (1.0 + torch.abs(ball2_position_x - humanoid1_position_x))
 
     dist1 = torch.sqrt((humanoid1_paddle_position[..., 0] - ball2_root_state_position[..., 0]) ** 2 +
                         (humanoid1_paddle_position[..., 1] - ball2_root_state_position[..., 1]) ** 2 +
@@ -1108,10 +1110,12 @@ def compute_pingpong_reward(
 
     # ball2 velocity change
     ball2_velocity_x = ball2_root_states[..., 7]
+    # print("if ball2_velocity_x == prev_ball2_velocity_x: ", (ball2_velocity_x == pre_ball2_velocity_x).sum())
     velocity_reward = torch.zeros_like(ball2_velocity_x)
     for i in range(len(ball2_velocity_x)):
-        if ball2_velocity_x[i] > 0:
+        if pre_ball2_velocity_x[i] < 0 and ball2_velocity_x[i] > 0:
             velocity_reward[i] = alpha * abs(ball2_velocity_x[i])
+    # print("velocity_reward: ", velocity_reward)
 
     # if ball2_velocity_x > 0:
     #     velocity_reward = alpha * abs(ball2_velocity_x)
