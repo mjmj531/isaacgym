@@ -100,6 +100,9 @@ class HumanoidPingpong(VecTask):
         # num_dofs
         self.cfg["env"]["numActions"] = 7
 
+        self.alpha = self.cfg["env"]["alphaVelocityReward"]
+        self.power_coefficient = self.cfg["env"]["powerCoefficient"]
+
         # speed_scale: 控制仿真中关节运动或动画的速度缩放比例
         self.speed_scale = 1.0
 
@@ -597,7 +600,7 @@ class HumanoidPingpong(VecTask):
             # ball2_handle
             name = 'pingpong_ball_2'.format(i)
             pose = gymapi.Transform()
-            pose.p = gymapi.Vec3(3.1, -0.28, 1.3)
+            pose.p = gymapi.Vec3(3.1, -0.35, 1.3)
             pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0) # 没有旋转
 
             self.ball2_handle = self.gym.create_actor(env_ptr, pingpong_ball_asset, pose, name, i, 0)
@@ -725,6 +728,8 @@ class HumanoidPingpong(VecTask):
             self.reset_buf,
             self.progress_buf,
             self.max_episode_length,
+            self.alpha,
+            self.power_coefficient
         )
 
         # self.rew_buf[:], self.reset_buf[:]  = compute_imitation_reward(self.root_states, self.body_states, self.dof_pos, self.dof_vel, self.ref_body_states, self.ref_dof_pos, self.ref_dof_vel, self.progress_buf, self.dof_force_tensor, self.body_states_id, self.feet_mask, self.is_g1, self.is_train)
@@ -868,7 +873,7 @@ class HumanoidPingpong(VecTask):
         # self.potentials[env_ids] = self.prev_potentials[env_ids].clone()
 
         # self.reset_buf[env_ids] = 0
-        # assert env_ids.max() < self.progress_buf.shape[0], f"Invalid index: env_ids contains index out of bounds"
+
         self.progress_buf[env_ids] = 0
         return
 
@@ -1069,7 +1074,7 @@ class HumanoidPingpong(VecTask):
 ###=========================jit functions=========================###
 #####################################################################
 
-# @torch.jit.script
+@torch.jit.script
 def compute_pingpong_reward(
     humanoid1_root_states, 
     humanoid1_paddle_rb_states, 
@@ -1077,12 +1082,14 @@ def compute_pingpong_reward(
     ball2_root_states, 
     dof_force_tensor, dof_vel, 
     reset_buf, progress_buf, 
-    max_episode_length
+    max_episode_length,
+    alpha,
+    power_coefficient
     ):
-    # # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float) -> Tuple[Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float) -> Tuple[Tensor, Tensor]
     
     threshold = 0.1  # 乒乓球掉落高度阈值
-    alpha = 10  # 乒乓球反方向速度奖励系数
+    # alpha = 10  # 乒乓球反方向速度奖励系数
 
     # compute the distance between the humanoid's right hand and the pingpong ball
     humanoid1_paddle_position = humanoid1_paddle_rb_states[..., 0:3] 
@@ -1109,18 +1116,34 @@ def compute_pingpong_reward(
     #         pos_reward1[i] = 0.0
 
     # ball2 velocity change
+    # 鼓励x方向速度变化
+    ball2_velocity = ball2_root_states[..., 7:10]
     ball2_velocity_x = ball2_root_states[..., 7]
     # print("if ball2_velocity_x == prev_ball2_velocity_x: ", (ball2_velocity_x == pre_ball2_velocity_x).sum())
     velocity_reward = torch.zeros_like(ball2_velocity_x)
-    for i in range(len(ball2_velocity_x)):
-        if pre_ball2_velocity_x[i] < 0 and ball2_velocity_x[i] > 0:
-            velocity_reward[i] = alpha * abs(ball2_velocity_x[i])
-    # print("velocity_reward: ", velocity_reward)
+    # for i in range(len(ball2_velocity_x)):
+    #     if pre_ball2_velocity_x[i] < 0 and ball2_velocity_x[i] > 0:
+    #         velocity_reward[i] = alpha * abs(ball2_velocity_x[i])
 
     # if ball2_velocity_x > 0:
     #     velocity_reward = alpha * abs(ball2_velocity_x)
 
-    power_coefficient = 0.0005  #0.0005
+    # 归一化？
+    # 归一化速度向量
+    velocity_norm = torch.norm(ball2_velocity, dim=-1, keepdim=True)  # 计算速度向量的模长
+    normalized_velocity = ball2_velocity / (velocity_norm + 1e-8)     # 归一化，避免除以零
+
+    # 提取归一化后的 x 方向速度分量
+    normalized_velocity_x = normalized_velocity[..., 0]
+
+    # 计算奖励
+    velocity_reward = torch.zeros_like(ball2_velocity_x)
+    for i in range(len(ball2_velocity_x)):
+        if pre_ball2_velocity_x[i] < 0 and ball2_velocity_x[i] > 0:
+            velocity_reward[i] = alpha * abs(normalized_velocity_x[i])  # 奖励归一化后的 x 方向分量
+
+    
+    # power_coefficient = 0.0005  #0.0005
     power = torch.abs(torch.multiply(dof_force_tensor, dof_vel)).sum(dim=-1)
     power_reward = -power_coefficient * power
     # power_reward[progress_buf <= 3] = 0  # First 3 frame power reward should not be counted. since they could be dropped.
@@ -1276,16 +1299,12 @@ def compute_pingpong_observations(body_states,
 
     body_pos = body_states[:, body_states_id, 0:3]
     body_rot = body_states[:, body_states_id, 3:7]
-    body_vel = body_states[:, body_states_id, 7:10]
-
-    # B, J, _ = body_pos.shape
 
     root_pos = body_pos[:, 0, :]
     root_rot = body_rot[:, 0, :]
 
     heading_rot_inv = calc_heading_quat_inv(root_rot)
 
-    # root_pos_expanded = root_pos.unsqueeze(1).expand_as(ball2_pos)  # [num_envs, 3]
     relative_ball2_pos = ball2_pos - root_pos  # [num_envs, 3]
 
     local_ball2_pos = my_quat_rotate(heading_rot_inv, relative_ball2_pos)  # [num_envs, 3]
