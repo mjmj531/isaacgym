@@ -26,48 +26,70 @@ import random
 # 
 # from isaacgymenvs.tasks.base.vec_task import VecTask
 
-initial_speed_range = (6.5, 7.5)  # 初速度范围 (单位: 米/秒)
+initial_speed_range = (7.5, 8.5)  # 初速度范围 (单位: 米/秒)
 tilt_angle_range = (-5.0, 5.0)  # 倾斜角范围 (单位: 度)
-
+tilt_z_range = (2.0, 5.0)
 origin_robot1_pose = torch.tensor([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0])
 origin_robot2_pose = torch.tensor([3.5, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0])
 origin_pingpong_table_pose = torch.tensor([1.75, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-origin_ball1_pose = torch.tensor([0.4, 0.28, 1.3, 0.0, 0.0, 0.0, 1.0])
-origin_ball2_pose = torch.tensor([3.1, -0.28, 1.3, 0.0, 0.0, 0.0, 1.0])
+origin_ball1_pose = torch.tensor([0.35, 0.28, 1.1, 0.0, 0.0, 0.0, 1.0])
+origin_ball2_pose = torch.tensor([3.15, -0.28, 1.1, 0.0, 0.0, 0.0, 1.0])
 
 def clamp(x, min_value, max_value):
     return max(min(x, max_value), min_value)
 
-def generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range):
+def generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range, tilt_angle_z_range):
     # ball_velocities = torch.zeros((num_envs, 2, 3))  # 速度 (vx, vy, vz)
     # 初始化球的位置，给定初速度和倾斜角
     speed_1 = random.uniform(*initial_speed_range)
     # print("i=", i, "speed=", speed_1)
     tilt_angle_1 = random.uniform(*tilt_angle_range)
+    tilt_angle_z_1 = random.uniform(*tilt_angle_z_range)
     # print("i=", i, "tilt_angle=", tilt_angle_1)
-    velocity_1 = gymapi.Vec3(speed_1 * math.cos(math.radians(tilt_angle_1)), speed_1 * math.sin(math.radians(tilt_angle_1)), 0.0)
+    # 将速度分解到 x, y, z 方向
+    # v_x = speed_1 * math.cos(math.radians(tilt_angle_1)) * math.cos(math.radians(tilt_angle_z_1))
+    # v_y = speed_1 * math.cos(math.radians(tilt_angle_1)) * math.sin(math.radians(tilt_angle_z_1))
+    # v_z = speed_1 * math.sin(math.radians(tilt_angle_1))
+    velocity_1 = gymapi.Vec3(speed_1 * math.cos(math.radians(tilt_angle_1)) * math.cos(math.radians(tilt_angle_z_1)), 
+                             speed_1 * math.sin(math.radians(tilt_angle_1)) * math.sin(math.radians(tilt_angle_z_1)), 
+                             v_z = speed_1 * math.sin(math.radians(tilt_angle_1)))
     ball_velocities_1 = torch.tensor([velocity_1.x, velocity_1.y, velocity_1.z  # 速度 (vx, vy, vz)
                                         ])
+    
     speed_2 = -random.uniform(*initial_speed_range)
     tilt_angle_2 = random.uniform(*tilt_angle_range)
-    velocity_2 = gymapi.Vec3(speed_2 * math.cos(math.radians(tilt_angle_2)), speed_2 * math.sin(math.radians(tilt_angle_2)), 0.0)
+    tilt_angle_z_2 = random.uniform(*tilt_angle_z_range)
+    velocity_2 = gymapi.Vec3(speed_2 * math.cos(math.radians(tilt_angle_2)) * math.cos(math.radians(tilt_angle_z_2)), 
+                             speed_2 * math.sin(math.radians(tilt_angle_2)) * math.sin(math.radians(tilt_angle_z_2)), 
+                             v_z = speed_2 * math.sin(math.radians(tilt_angle_2)))
+    # velocity_2 = gymapi.Vec3(speed_2 * math.cos(math.radians(tilt_angle_2)), speed_2 * math.sin(math.radians(tilt_angle_2)), 0.0)
     ball_velocities_2 = torch.tensor([velocity_2.x, velocity_2.y, velocity_2.z  # 速度 (vx, vy, vz)
                                             ])
     return ball_velocities_1, ball_velocities_2
 
-def generate_random_speed_for_ball(initial_speed_range, tilt_angle_range):
+def generate_random_speed_for_ball(initial_speed_range, tilt_angle_range, tilt_angle_z_range):
     # ball_velocities = torch.zeros((num_envs, 2, 3))  # 速度 (vx, vy, vz)
     # 初始化球的位置，给定初速度和倾斜角
     speed_1 = random.uniform(*initial_speed_range)
     # print("i=", i, "speed=", speed_1)
     tilt_angle_1 = random.uniform(*tilt_angle_range)
+    tilt_angle_z_1 = random.uniform(*tilt_angle_z_range)
     # print("i=", i, "tilt_angle=", tilt_angle_1)
-    velocity_1 = gymapi.Vec3(speed_1 * math.cos(math.radians(tilt_angle_1)), speed_1 * math.sin(math.radians(tilt_angle_1)), 0.0)
+    # velocity_1 = gymapi.Vec3(speed_1 * math.cos(math.radians(tilt_angle_1)), speed_1 * math.sin(math.radians(tilt_angle_1)), 0.0)
+    
+    velocity_1 = gymapi.Vec3(speed_1 * math.cos(math.radians(tilt_angle_1)) * math.cos(math.radians(tilt_angle_z_1)), 
+                             speed_1 * math.sin(math.radians(tilt_angle_1)) * math.sin(math.radians(tilt_angle_z_1)), 
+                             speed_1 * math.sin(math.radians(tilt_angle_1)))
     ball_velocities_1 = torch.tensor([velocity_1.x, velocity_1.y, velocity_1.z  # 速度 (vx, vy, vz)
                                         ])
     speed_2 = -random.uniform(*initial_speed_range)
     tilt_angle_2 = random.uniform(*tilt_angle_range)
-    velocity_2 = gymapi.Vec3(speed_2 * math.cos(math.radians(tilt_angle_2)), speed_2 * math.sin(math.radians(tilt_angle_2)), 0.0)
+    tilt_angle_2 = random.uniform(*tilt_angle_range)
+    tilt_angle_z_2 = random.uniform(*tilt_angle_z_range)
+    velocity_2 = gymapi.Vec3(speed_2 * math.cos(math.radians(tilt_angle_2)) * math.cos(math.radians(tilt_angle_z_2)), 
+                             speed_2 * math.sin(math.radians(tilt_angle_2)) * math.sin(math.radians(tilt_angle_z_2)), 
+                             speed_2 * math.sin(math.radians(tilt_angle_2)))
+    # velocity_2 = gymapi.Vec3(speed_2 * math.cos(math.radians(tilt_angle_2)), speed_2 * math.sin(math.radians(tilt_angle_2)), 0.0)
     ball_velocities_2 = torch.tensor([velocity_2.x, velocity_2.y, velocity_2.z  # 速度 (vx, vy, vz)
                                             ])
     return velocity_1, velocity_2
@@ -80,7 +102,12 @@ def reset_ids(i, env_ids, root_state_tensor, dof_state_tensor, initial_dof_state
     # root_state_tensor[env_ids, 2, 0:7] = origin_pingpong_table_pose
 
     # Randomize speed and tilt angle for both balls
-    ball_velocities_1, ball_velocities_2 = generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range)
+    velocity_1, velocity_2 = generate_random_speed_for_ball(initial_speed_range, tilt_angle_range, tilt_z_range)
+    ball_velocities_1 = torch.tensor([velocity_1.x, velocity_1.y, velocity_1.z  # 速度 (vx, vy, vz)
+                                        ])
+    ball_velocities_2 = torch.tensor([velocity_2.x, velocity_2.y, velocity_2.z  # 速度 (vx, vy, vz)
+                                        ])
+
 
     # Update ball 1 position and velocity (index 4)
     root_state_tensor[env_ids, 3, 0:7] = origin_ball1_pose
@@ -198,7 +225,7 @@ if viewer is None:
 
 # load asset
 asset_root = "../../assets"
-asset_file = "mjcf/g1_29dof_rev_1_0_pingpong_only_right_arm.urdf"
+asset_file = "mjcf/g1_29dof_rev_1_0_pingpong_fixed_except_right_arm.urdf"
 
 # asset_root = '/home/jiangnan/unitree_model/unitree_mujoco/unitree_robots/g1/'
 # asset_file = 'g1_29dof.xml'
@@ -267,12 +294,15 @@ right_arm_dof_names = [
 dof_props = gym.get_asset_dof_properties(asset)
 
 # create an array of DOF states that will be used to update the actors
-num_dofs = gym.get_asset_dof_count(asset) # 29
+num_dofs = gym.get_asset_dof_count(asset) # 7
+num_bodies = gym.get_asset_rigid_body_count(asset) # 40
+# num_dof = self.gym.get_asset_dof_count(humanoid_asset)
+num_joints = gym.get_asset_joint_count(asset) # 39
 
 dof_states = np.zeros(num_dofs, dtype=gymapi.DofState.dtype)
 
 # get list of DOF types
-dof_types = [gym.get_asset_dof_type(asset, i) for i in range(num_dofs)]
+dof_types = [gym.get_asset_dof_type(asset, i) for i in range(num_dofs)] # [DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, DofType.DOF_ROTATION, D]
 
 # get the position slice of the DOF state array
 dof_positions = dof_states['pos']
@@ -290,12 +320,6 @@ def initialize_dof_states():
     defaults = np.zeros(num_dofs)
     speeds = np.zeros(num_dofs)
     for i in range(num_dofs):
-        dof_name = dof_names[i]
-        # limit: only move right arm
-        if dof_name not in right_arm_dof_names:
-            stiffnesses[i] = 1e6
-            dampings[i] = 1e6
-            speeds[i] = 0.0
             
         if has_limits[i]:
             if dof_types[i] == gymapi.DOF_ROTATION:
@@ -309,7 +333,7 @@ def initialize_dof_states():
         else:
             # set reasonable animation limits for unlimited joints
             if dof_types[i] == gymapi.DOF_ROTATION:
-                # unlimited revolute joint
+                # unlimited revolute jointS
                 lower_limits[i] = -math.pi
                 upper_limits[i] = math.pi
             elif dof_types[i] == gymapi.DOF_TRANSLATION:
@@ -351,8 +375,8 @@ def reset_positions():
 #         print("    Upper   %f" % upper_limits[i])
 
 # set up the env grid
-num_envs = 16
-num_per_row = 4
+num_envs = 4
+num_per_row = 2
 spacing = 4
 env_lower = gymapi.Vec3(-spacing, 0.0, -spacing)
 env_upper = gymapi.Vec3(spacing, spacing, spacing)
@@ -376,14 +400,32 @@ for i in range(num_envs):
 
     # add actor
     pose = gymapi.Transform()
-    pose.p = gymapi.Vec3(0.0, 0.0, 1.0)
+    pose.p = gymapi.Vec3(0.0, -0.0, 1.0)
     pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
+    # pose.r = gymapi.Quat(0.0, 0.0, 0.3827, 0.9239) # 45度
+    # pose.r = gymapi.Quat(0.0, 0.0, 0.2588, 0.9659) # 30
+    # pose.r = gymapi.Quat(0.0, 0.0, -0.2588, 0.9659) # -30
+    # pose.r = gymapi.Quat(0.0, 0.0, -0.3827, 0.9239) # -45
+
 
     robot1_handle = gym.create_actor(env, asset, pose, "actor", i, 0)
+    robot1_shape_props = gym.get_actor_rigid_shape_properties(env, robot1_handle) # len=7
+    for j in range(len(robot1_shape_props)):
+        # print(f"Element {i} properties: {prop}")
+        robot1_shape_props[j].restitution = 0.6
+        robot1_shape_props[j].friction = 0.5
+        robot1_shape_props[j].rolling_friction = 0.5
+
+    # pingpong_paddle_id = gym.find_actor_rigid_body_index(env, robot1_handle, 'pingpong_paddle', gymapi.DOMAIN_ACTOR)
+    # robot1_shape_props[pingpong_paddle_id].restitution = 0.6
+    # robot1_shape_props[pingpong_paddle_id].friction = 0.5
+    # robot1_shape_props[pingpong_paddle_id].rolling_friction = 0.5
+
+    gym.set_actor_rigid_shape_properties(env, robot1_handle, robot1_shape_props)
     actor_handles.append(robot1_handle)
 
     # set default DOF positions
-    initialize_dof_states()
+    # initialize_dof_states()
     gym.set_actor_dof_states(env, robot1_handle, dof_states, gymapi.STATE_ALL)
     # set DOF properties
     gym.set_actor_dof_properties(env, robot1_handle, dof_props)
@@ -392,12 +434,22 @@ for i in range(num_envs):
     pose = gymapi.Transform()
     pose.p = gymapi.Vec3(3.5, 0.0, 1.0)
     pose.r = gymapi.Quat(0.0, 0.0, 1.0, 0.0)
+    # pose.r = gymapi.Quat(0.0, 0.0, -0.9239, 0.3827)
 
     # param6: bit collision
     robot2_handle = gym.create_actor(env, asset, pose, "actor", i, 0)
+    robot2_shape_props = gym.get_actor_rigid_shape_properties(env, robot2_handle)
+    for j in range(len(robot2_shape_props)):
+        # print(f"Element {j} restitution: {robot2_shape_props[j].restitution}")
+        robot2_shape_props[j].restitution = 0.6
+        robot2_shape_props[j].friction = 0.5
+        robot2_shape_props[j].rolling_friction = 0.5
+    gym.set_actor_rigid_shape_properties(env, robot2_handle, robot2_shape_props)
+    # print("robot_shape_props = ", robot_shape_props)
     actor_handles.append(robot2_handle)
 
     # set default DOF positions
+    # initialize_dof_states()
     gym.set_actor_dof_states(env, robot2_handle, dof_states, gymapi.STATE_ALL)
     gym.set_actor_dof_properties(env, robot2_handle, dof_props)
 
@@ -410,6 +462,7 @@ for i in range(num_envs):
 
     table_handle = gym.create_actor(env, asset_pingpong, pose, "actor", i, 0)
     shape_props = gym.get_actor_rigid_shape_properties(env, table_handle)
+    # print(len(shape_props))
     shape_props[0].restitution = 0.9
     shape_props[0].friction = 0.2
     shape_props[0].rolling_friction = 0.2
@@ -417,12 +470,12 @@ for i in range(num_envs):
     actor_handles.append(table_handle)
 
     # generate random speed and tilt angle for each ball
-    velocity_1, velocity_2 = generate_random_speed_for_ball(initial_speed_range, tilt_angle_range)
+    velocity_1, velocity_2 = generate_random_speed_for_ball(initial_speed_range, tilt_angle_range, tilt_z_range)
 
     # add ball 1
     name = 'pingpong_ball_1'.format(i)
     pose = gymapi.Transform()
-    pose.p = gymapi.Vec3(0.4, 0.28, 1.3)
+    pose.p = gymapi.Vec3(0.35, 0.28, 1.1)
     pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0) # 没有旋转
 
     actor_handle = gym.create_actor(env, asset_pingpong_ball, pose, name, i, 0)
@@ -443,7 +496,7 @@ for i in range(num_envs):
     # add ball 2
     name = 'pingpong_ball_2'.format(i)
     pose = gymapi.Transform()
-    pose.p = gymapi.Vec3(3.1, -0.28, 1.3)
+    pose.p = gymapi.Vec3(3.15, -0.28, 1.1)
     pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0) # 没有旋转
 
     actor_handle = gym.create_actor(env, asset_pingpong_ball, pose, name, i, 0)
@@ -468,7 +521,7 @@ def set_velocity(root_state_tensor):
     # set ball 1&2's initial speed and tilt angle for each env
     for i in range(num_envs):
 
-        ball_velocities_1, ball_velocities_2 = generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range)
+        ball_velocities_1, ball_velocities_2 = generate_random_speed_and_tilt_angle(initial_speed_range, tilt_angle_range, tilt_z_range)
         
         ball_velocities[i, 0] = ball_velocities_1
         ball_velocities[i, 1] = ball_velocities_2
@@ -483,7 +536,7 @@ def set_velocity(root_state_tensor):
         # 更新ball 2的速度
         root_state_tensor[i, 4, 7:10] = ball_velocities[i, 1]
 
-        print("root_state_tensor[", i, "] = ", root_state_tensor[i])
+        # print("root_state_tensor[", i, "] = ", root_state_tensor[i])
 
     # 刷新actor的根状态
     # gym.refresh_actor_root_state_tensor(sim) # 不受控
@@ -530,7 +583,7 @@ def compute_reward(robot_pos, robot_arm_pos, ball_pos, ball_vel, time_step):
 def get_robot_arm_position():
     dof_state_tensor = gym.acquire_dof_state_tensor(sim)
     dof_state = gymtorch.wrap_tensor(dof_state_tensor)
-    print(dof_state.shape)
+    # print(dof_state.shape)
     # robot_arm_pos = dof_state[:, 0:3]
 
 # ball_pos = get_ball_position()  # Get the ping pong ball position
@@ -582,25 +635,18 @@ while not gym.query_viewer_has_closed(viewer):
     root_state_tensor = root_state_tensor_origin.view(num_envs, -1, 13)
     ball1_state_tensor = root_state_tensor[:, 3, :]
     ball2_state_tensor = root_state_tensor[:, 4, :]
-    print("ball1_state_tensor = ", ball1_state_tensor) # torch.size([16, 13])
-    print("ball2_state_tensor = ", ball2_state_tensor)
+    # print("ball1_state_tensor = ", ball1_state_tensor) # torch.size([16, 13])
+    # print("ball2_state_tensor = ", ball2_state_tensor)
 
 
     dof_tensor = gym.acquire_dof_state_tensor(sim)
     dof_state_tensor_origin = gymtorch.wrap_tensor(dof_tensor)
-    print("dof_state.shape=", dof_state_tensor_origin.shape) # torch.Size([928, 2])
+    # print("dof_state.shape=", dof_state_tensor_origin.shape) # torch.Size([928, 2])
     dof_state_tensor = dof_state_tensor_origin.view(num_envs, -1, 2)
     print("dof_state_tensor.shape=", dof_state_tensor.shape) # torch.Size([16, 52, 2])
-    dof_state_tensor_2_robot = dof_state_tensor.view(num_envs, -1, 2, 2)
+    # dof_state_tensor_2_robot = dof_state_tensor.view(num_envs, -1, 2, 2)
     # print("dof_state_tensor_2_robot.shape=", dof_state_tensor_2_robot.shape) # torch.Size([16, 26, 2, 2])
 
-    # get robot arm position
-    for i in range(num_envs):
-        
-        robot_arm_pos_1 = dof_state_tensor_2_robot[i, -4, 0, :]
-        robot_arm_pos_2 = dof_state_tensor_2_robot[i, -4, 1, :]
-        # print("robot_arm_pos = ", robot_arm_pos_1)
-        # print("robot_arm_pos = ", robot_arm_pos_2)
 
     # 刚体状态 1个robot39个
     _rb_states = gym.acquire_rigid_body_state_tensor(sim)
@@ -615,10 +661,11 @@ while not gym.query_viewer_has_closed(viewer):
     vec_robot2_paddle_rb_states = vec_rb_states[:, 79, :]
     robot2_paddle_pos = vec_robot2_paddle_rb_states[:, 0:3] # torch.Size([16, 3])
     
-    # vec_table_states = vec_rb_states[:, 78:79, :]
-    # vec_ball1_states = vec_rb_states[:, 79:80, :]
-    # vec_ball2_states = vec_rb_states[:, 80:81, :]
-    print("vec_robot1_states.shape=", vec_robot1_rb_states.shape) # torch.Size([16, 40, 13])
+    vec_table_states = vec_rb_states[:, 80, :]
+    vec_ball1_states = vec_rb_states[:, 81, :]
+    # print("vec_ball1_states=", vec_ball1_states) # torch.Size([16, 1, 13])
+    vec_ball2_states = vec_rb_states[:, 82, :]
+    # print("vec_ball2_states=", vec_robot1_rb_states) # torch.Size([16, 1, 13])
 
     if frame_count == 0:
         initial_dof_state_tensor = gymtorch.wrap_tensor(dof_tensor).clone()

@@ -102,6 +102,7 @@ class HumanoidPingpong(VecTask):
 
         self.alpha = self.cfg["env"]["alphaVelocityReward"]
         self.power_coefficient = self.cfg["env"]["powerCoefficient"]
+        self.penalty = self.cfg["env"]["penalty"]
 
         # speed_scale: 控制仿真中关节运动或动画的速度缩放比例
         self.speed_scale = 1.0
@@ -501,7 +502,8 @@ class HumanoidPingpong(VecTask):
             # humanoid1_handle
             pose = gymapi.Transform()
             pose.p = gymapi.Vec3(0.0, 0.0, 1.0)
-            pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
+            # pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
+            pose.r = gymapi.Quat(0.0, 0.0, -0.2588, 0.9659) # -30
 
             # param6: bit collision
             # 是否有必要写成self.
@@ -600,7 +602,7 @@ class HumanoidPingpong(VecTask):
             # ball2_handle
             name = 'pingpong_ball_2'.format(i)
             pose = gymapi.Transform()
-            pose.p = gymapi.Vec3(3.1, -0.35, 1.3)
+            pose.p = gymapi.Vec3(3.1, -0.3, 1.3)
             pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0) # 没有旋转
 
             self.ball2_handle = self.gym.create_actor(env_ptr, pingpong_ball_asset, pose, name, i, 0)
@@ -729,13 +731,14 @@ class HumanoidPingpong(VecTask):
             self.progress_buf,
             self.max_episode_length,
             self.alpha,
-            self.power_coefficient
+            self.power_coefficient,
+            self.penalty
         )
 
         # self.rew_buf[:], self.reset_buf[:]  = compute_imitation_reward(self.root_states, self.body_states, self.dof_pos, self.dof_vel, self.ref_body_states, self.ref_dof_pos, self.ref_dof_vel, self.progress_buf, self.dof_force_tensor, self.body_states_id, self.feet_mask, self.is_g1, self.is_train)
         # self.reset_buf = torch.logical_or(self.reset_buf, self.reset_buf_force)
 
-        if self.num_steps % 36 == 0:
+        if self.num_steps % 20 == 0:
             reward_mean = torch.mean(self.rew_buf).item()
             progress_mean = torch.mean(self.progress_buf.float()).item()
             print(f"{reward_mean:.4f}    {progress_mean:.4f}", flush=True)
@@ -1084,9 +1087,10 @@ def compute_pingpong_reward(
     reset_buf, progress_buf, 
     max_episode_length,
     alpha,
-    power_coefficient
+    power_coefficient,
+    penalty
     ):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float) -> Tuple[Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float) -> Tuple[Tensor, Tensor]
     
     threshold = 0.1  # 乒乓球掉落高度阈值
     # alpha = 10  # 乒乓球反方向速度奖励系数
@@ -1116,34 +1120,18 @@ def compute_pingpong_reward(
     #         pos_reward1[i] = 0.0
 
     # ball2 velocity change
-    # 鼓励x方向速度变化
-    ball2_velocity = ball2_root_states[..., 7:10]
     ball2_velocity_x = ball2_root_states[..., 7]
     # print("if ball2_velocity_x == prev_ball2_velocity_x: ", (ball2_velocity_x == pre_ball2_velocity_x).sum())
     velocity_reward = torch.zeros_like(ball2_velocity_x)
-    # for i in range(len(ball2_velocity_x)):
-    #     if pre_ball2_velocity_x[i] < 0 and ball2_velocity_x[i] > 0:
-    #         velocity_reward[i] = alpha * abs(ball2_velocity_x[i])
+    for i in range(len(ball2_velocity_x)):
+        if pre_ball2_velocity_x[i] < 0 and ball2_velocity_x[i] > 0:
+            velocity_reward[i] = alpha * abs(ball2_velocity_x[i])
+    # print("velocity_reward: ", velocity_reward)
 
     # if ball2_velocity_x > 0:
     #     velocity_reward = alpha * abs(ball2_velocity_x)
 
-    # 归一化？
-    # 归一化速度向量
-    velocity_norm = torch.norm(ball2_velocity, dim=-1, keepdim=True)  # 计算速度向量的模长
-    normalized_velocity = ball2_velocity / (velocity_norm + 1e-8)     # 归一化，避免除以零
-
-    # 提取归一化后的 x 方向速度分量
-    normalized_velocity_x = normalized_velocity[..., 0]
-
-    # 计算奖励
-    velocity_reward = torch.zeros_like(ball2_velocity_x)
-    for i in range(len(ball2_velocity_x)):
-        if pre_ball2_velocity_x[i] < 0 and ball2_velocity_x[i] > 0:
-            velocity_reward[i] = alpha * abs(normalized_velocity_x[i])  # 奖励归一化后的 x 方向分量
-
-    
-    # power_coefficient = 0.0005  #0.0005
+    # power_coefficient = 0.001  #0.0005
     power = torch.abs(torch.multiply(dof_force_tensor, dof_vel)).sum(dim=-1)
     power_reward = -power_coefficient * power
     # power_reward[progress_buf <= 3] = 0  # First 3 frame power reward should not be counted. since they could be dropped.
@@ -1154,13 +1142,28 @@ def compute_pingpong_reward(
 
     # all rewards
     reward1 = pos_reward1 + power_reward + velocity_reward
+
+    # 检测球是否未击中球拍
+    ball_x = ball2_root_state_position[..., 0]
+    paddle_x = humanoid1_paddle_position[..., 0]
+    missed_ball = ball_x < paddle_x - 1e-3  # 球的 x 位置小于球拍的 x 位置
+
+    # 给予惩罚
+    # penalty = -10.0  # 自定义惩罚值
+    reward1 = torch.where(missed_ball, reward1 + penalty, reward1)
     
     # 重置条件
     ones = torch.ones_like(reset_buf) # 全1
     die = torch.zeros_like(reset_buf) # 全0
+
+    # 如果球未击中球拍，在第一帧后重置
+    die = torch.where(missed_ball, ones, die)
     
     # 如果ball1和ball2掉到地面下，需要重置
     die = torch.where((ball2_root_state_position[..., 2] < threshold), ones, die)
+
+    # # 如果球未击中球拍，在第一帧后重置
+    # die = torch.where(missed_ball, ones, die)
     
     reset = torch.where(progress_buf >= max_episode_length - 1, ones, die)
     # print("reset:", reset)
@@ -1168,6 +1171,112 @@ def compute_pingpong_reward(
     #     print("resetting envs")
     
     return reward1, reset
+
+# @torch.jit.script
+# def compute_pingpong_reward(
+#     humanoid1_root_states, 
+#     humanoid1_paddle_rb_states, 
+#     pre_ball2_root_states, 
+#     ball2_root_states, 
+#     dof_force_tensor, dof_vel, 
+#     reset_buf, progress_buf, 
+#     max_episode_length,
+#     alpha,
+#     power_coefficient
+#     ):
+#     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float) -> Tuple[Tensor, Tensor]
+    
+#     threshold = 0.1  # 乒乓球掉落高度阈值
+#     # alpha = 10  # 乒乓球反方向速度奖励系数
+
+#     # compute the distance between the humanoid's right hand and the pingpong ball
+#     humanoid1_paddle_position = humanoid1_paddle_rb_states[..., 0:3] 
+#     ball2_root_state_position = ball2_root_states[..., 0:3]
+
+#     # # ball velocity change
+#     pre_ball2_velocity_x = pre_ball2_root_states[..., 7]
+#     pre_ball2_velocity_z = pre_ball2_root_states[..., 9]
+#     # ball2_velocity_x = ball2_root_states[..., 7]
+#     # ball2_acceleration_x = (ball2_velocity_x - pre_ball2_velocity_x) / dt
+
+#     # # keep the ball in front of the humanoid
+#     # ball2_position_x = ball2_root_state_position[..., 0]
+#     # humanoid1_position_x = humanoid1_root_states[..., 0]
+#     # front_reward = 1.0 / (1.0 + torch.abs(ball2_position_x - humanoid1_position_x))
+
+#     dist1 = torch.sqrt((humanoid1_paddle_position[..., 0] - ball2_root_state_position[..., 0]) ** 2 +
+#                         (humanoid1_paddle_position[..., 1] - ball2_root_state_position[..., 1]) ** 2 +
+#                         (humanoid1_paddle_position[..., 2] - ball2_root_state_position[..., 2]) ** 2)
+
+#     pos_reward1 = 1.0 / (1.0 + 1.5 * dist1 * dist1)  # humanoid1 和 ball2 之间的奖励
+
+#     # for i in range(len(pos_reward1)):
+#     #     if ball2_root_state_position[i, 0] > 1.75:
+#     #         pos_reward1[i] = 0.0
+
+#     # ball2 velocity change
+#     # 鼓励x方向速度变化
+#     ball2_velocity = ball2_root_states[..., 7:10]
+#     ball2_velocity_x = ball2_root_states[..., 7]
+#     ball2_velocity_z = ball2_root_states[..., 9]
+#     # print("if ball2_velocity_x == prev_ball2_velocity_x: ", (ball2_velocity_x == pre_ball2_velocity_x).sum())
+#     velocity_reward = torch.zeros_like(ball2_velocity_x)
+#     for i in range(len(ball2_velocity_x)):
+#         if pre_ball2_velocity_x[i] < 0 and ball2_velocity_x[i] > 0:
+#             velocity_reward[i] = alpha * abs(ball2_velocity_x[i])
+
+#     # if ball2_velocity_x > 0:
+#     #     velocity_reward = alpha * abs(ball2_velocity_x)
+
+#     # # 归一化？
+#     # # 归一化速度向量
+#     # velocity_norm = torch.norm(ball2_velocity, dim=-1, keepdim=True)  # 计算速度向量的模长
+#     # normalized_velocity = ball2_velocity / (velocity_norm + 1e-8)     # 归一化，避免除以零
+
+#     # # 提取归一化后的 x 方向速度分量
+#     # normalized_velocity_x = normalized_velocity[..., 0]
+
+#     # # 计算奖励
+#     # velocity_reward = torch.zeros_like(ball2_velocity_x)
+#     # for i in range(len(ball2_velocity_x)):
+#     #     if pre_ball2_velocity_x[i] < 0 and ball2_velocity_x[i] > 0:
+#     #         velocity_reward[i] = alpha * abs(normalized_velocity_x[i])  # 奖励归一化后的 x 方向分量
+
+#     # # 鼓励打中对面桌面
+#     # hit_table_reward = torch.zeros_like(ball2_velocity_x)
+#     # normalized_velocity_z = normalized_velocity[..., 2]
+#     # for i in range(len(ball2_velocity_x)):
+#     #     if ball2_root_state_position[i, 0] > 1.75:
+#     #         if pre_ball2_velocity_z[i] < 0 and ball2_velocity_z[i] > 0:
+#     #             # hit_table_reward[i] = beta * abs(normalized_velocity_z[i])  # 奖励归一化后的 z 方向分量
+
+
+    
+#     # power_coefficient = 0.0005  #0.0005
+#     power = torch.abs(torch.multiply(dof_force_tensor, dof_vel)).sum(dim=-1)
+#     power_reward = -power_coefficient * power
+#     # power_reward[progress_buf <= 3] = 0  # First 3 frame power reward should not be counted. since they could be dropped.
+
+#     # reward for duration of being alive
+#     # alive_reward = torch.ones_like(potentials) * 2.0
+#     # progress_reward = potentials - prev_potentials
+
+#     # all rewards
+#     reward1 = pos_reward1 + power_reward + velocity_reward
+    
+#     # 重置条件
+#     ones = torch.ones_like(reset_buf) # 全1
+#     die = torch.zeros_like(reset_buf) # 全0
+    
+#     # 如果ball1和ball2掉到地面下，需要重置
+#     die = torch.where((ball2_root_state_position[..., 2] < threshold), ones, die)
+    
+#     reset = torch.where(progress_buf >= max_episode_length - 1, ones, die)
+#     # print("reset:", reset)
+#     # if reset.any():
+#     #     print("resetting envs")
+    
+#     return reward1, reset
 
 # @torch.jit.script
 def compute_imitation_reward(root_states, body_states, dof_pos, dof_vel, ref_body_states, ref_dof_pos, ref_dof_vel, progress_buf, dof_force_tensor, body_states_id=None, feet_mask=None, is_g1=False, is_train=True):
