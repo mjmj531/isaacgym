@@ -1099,7 +1099,7 @@ class HumanoidPingpongTilt(VecTask):
 ###=========================jit functions=========================###
 #####################################################################
 
-# @torch.jit.script
+@torch.jit.script
 def compute_pingpong_reward(
     humanoid1_root_states, 
     humanoid1_paddle_rb_states, 
@@ -1112,11 +1112,9 @@ def compute_pingpong_reward(
     power_coefficient,
     penalty,
     hit_table_reward,
-    reward_calculated,
-    prev_potentials=None,
-    potentials=None
+    reward_calculated
     ):
-    # # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, Tensor, Tensor) -> Tuple[Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, Tensor) -> Tuple[Tensor, Tensor]
     
     threshold = 0.1  # 乒乓球掉落高度阈值
     # alpha = 10  # 乒乓球反方向速度奖励系数
