@@ -104,16 +104,16 @@ class HumanoidPingpongTilt(VecTask):
         self.power_coefficient = self.cfg["env"]["powerCoefficient"]
         self.penalty = self.cfg["env"]["penalty"]
         self.hit_table_reward = self.cfg["env"]["hitTableReward"]
+        self.not_hit_table_penalty = self.cfg["env"]["nothitTablePenalty"]
         # self.reward_calculated = torch.zeros(len(self.num_envs), dtype=torch.bool, device = self.device)  # 标志张量，记录每个环境是否已计算奖励
 
         # speed_scale: 控制仿真中关节运动或动画的速度缩放比例
         self.speed_scale = 1.0
 
         # pingpong_ball initial speed and tilt angle range
-        # self.initial_speed_range = (8.0, 8.8)  # 初速度范围 (单位: 米/秒)
-        self.initial_speed_range = (8.0, 8.5)
+        self.initial_speed_range = (8.0, 8.6)  # 初速度范围 (单位: 米/秒)
         self.tilt_angle_range = (-5.0, 5.0)  # 倾斜角范围 (单位: 度)
-        self.tilt_z_angle_range = (5.0, 10.0) # z方向倾斜角范围（单位：度）
+        self.tilt_z_angle_range = (2.0, 10.0) # z方向倾斜角范围（单位：度）
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
@@ -151,9 +151,6 @@ class HumanoidPingpongTilt(VecTask):
 
         # dof force
         self.dof_force_tensor = gymtorch.wrap_tensor(dof_force_tensor).view(self.num_envs, self.dofs_per_env)
-
-        self.reward_calculated = torch.zeros(self.num_envs, dtype=torch.bool, device = self.device)  # 标志张量，记录每个环境是否已计算奖励
-
 
         ### !!!!!!!!!!!!!!!!!!!!! ###
         body_states = self.gym.acquire_rigid_body_state_tensor(self.sim)
@@ -241,6 +238,9 @@ class HumanoidPingpongTilt(VecTask):
         # self.init_obs_demo()
 
         self.num_steps = 0
+        self.reward_calculated = torch.zeros(self.num_envs, dtype=torch.bool, device = self.device)  # 标志张量，记录每个环境是否已计算奖励
+        self.condition_calculated = torch.zeros(self.num_envs, dtype=torch.bool, device = self.device)  # 标志张量，记录每个环境是否已计算paddle reward
+        self.no_bounce_before_half_mask = torch.ones(self.num_envs, dtype=torch.bool, device = self.device)  # 标志张量，记录每个环境是否在半程之前没有发生碰撞
 
         if not self.headless:
             self._init_camera()
@@ -737,7 +737,7 @@ class HumanoidPingpongTilt(VecTask):
         return body_ids
 
     def compute_reward(self, actions):
-        self.rew_buf[:], self.reset_buf[:] = compute_pingpong_reward(
+        self.rew_buf[:], self.reset_buf[:] = compute_pingpong_reward_nv(
             self.humanoid1_root_states,
             self.humanoid1_paddle_rb_states,
             self.pre_ball2_root_states,
@@ -750,14 +750,17 @@ class HumanoidPingpongTilt(VecTask):
             self.alpha,
             self.power_coefficient,
             self.penalty,
+            self.condition_calculated,
             self.hit_table_reward,
-            self.reward_calculated
+            self.not_hit_table_penalty,
+            self.reward_calculated,
+            self.no_bounce_before_half_mask
         )
 
         # self.rew_buf[:], self.reset_buf[:]  = compute_imitation_reward(self.root_states, self.body_states, self.dof_pos, self.dof_vel, self.ref_body_states, self.ref_dof_pos, self.ref_dof_vel, self.progress_buf, self.dof_force_tensor, self.body_states_id, self.feet_mask, self.is_g1, self.is_train)
         # self.reset_buf = torch.logical_or(self.reset_buf, self.reset_buf_force)
 
-        if self.num_steps % 20 == 0:
+        if self.num_steps % 40 == 0:
             reward_mean = torch.mean(self.rew_buf).item()
             progress_mean = torch.mean(self.progress_buf.float()).item()
             print(f"{reward_mean:.4f}    {progress_mean:.4f}", flush=True)
@@ -805,7 +808,7 @@ class HumanoidPingpongTilt(VecTask):
 
     def reset_idx(self, env_ids):
         # self._reset_actors(env_ids)
-        # print("env_ids which need reset: ", env_ids)
+        print("env_ids which need reset: ", env_ids)
         self._reset_idx(env_ids)
 
         return
@@ -854,8 +857,6 @@ class HumanoidPingpongTilt(VecTask):
         for index, env_id in enumerate(env_ids):
             # 随机生成球的速度
             velocity_2 = self.generate_random_speed_for_ball(self.initial_speed_range, self.tilt_angle_range, self.tilt_z_angle_range)
-            # newv
-            # velocity_2 = self.generate_random_speed_for_ball(self.initial_speed_range, self.tilt_angle_range, self.tilt_z_angle_range)
             ball_velocities_2 = torch.tensor([velocity_2.x, velocity_2.y, velocity_2.z  # 速度 (vx, vy, vz)
                                                 ], device=self.device)
             self.vec_root_states[env_id, 2, 7:10] = ball_velocities_2
@@ -900,6 +901,8 @@ class HumanoidPingpongTilt(VecTask):
 
         self.progress_buf[env_ids] = 0
         self.reward_calculated[env_ids] = False
+        self.condition_calculated[env_ids] = False
+        self.no_bounce_before_half_mask[env_ids] = True
         return
 
     # def init_obs_demo(self):
@@ -1100,6 +1103,169 @@ class HumanoidPingpongTilt(VecTask):
 #####################################################################
 
 @torch.jit.script
+def compute_pingpong_reward_nv(
+    humanoid1_root_states, 
+    humanoid1_paddle_rb_states, 
+    pre_ball2_root_states, 
+    ball2_root_states, 
+    dof_force_tensor, dof_vel, 
+    reset_buf, progress_buf, 
+    max_episode_length,
+    alpha,
+    power_coefficient,
+    penalty,
+    condition_calculated,
+    hit_table_reward,
+    not_hit_table_penalty,
+    reward_calculated,
+    no_bounce_before_half_mask
+    ):
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, Tensor, float, float, Tensor, Tensor) -> Tuple[Tensor, Tensor]
+    
+    threshold = 0.1  # 乒乓球掉落高度阈值
+    # alpha = 10  # 乒乓球反方向速度奖励系数
+
+    # compute the distance between the humanoid's right hand and the pingpong ball
+    humanoid1_paddle_position = humanoid1_paddle_rb_states[..., 0:3] 
+    ball2_root_state_position = ball2_root_states[..., 0:3]
+
+    # # ball velocity change
+    pre_ball2_velocity_x = pre_ball2_root_states[..., 7]
+    # pre_ball2_velocity_z = pre_ball2_root_states[..., 9]
+
+    # ball2_velocity_x = ball2_root_states[..., 7]
+    # ball2_acceleration_x = (ball2_velocity_x - pre_ball2_velocity_x) / dt
+
+    # # keep the ball in front of the humanoid
+    # ball2_position_x = ball2_root_state_position[..., 0]
+    # humanoid1_position_x = humanoid1_root_states[..., 0]
+    # front_reward = 1.0 / (1.0 + torch.abs(ball2_position_x - humanoid1_position_x))
+
+    dist1 = torch.sqrt((humanoid1_paddle_position[..., 0] - ball2_root_state_position[..., 0]) ** 2 +
+                        (humanoid1_paddle_position[..., 1] - ball2_root_state_position[..., 1]) ** 2 +
+                        (humanoid1_paddle_position[..., 2] - ball2_root_state_position[..., 2]) ** 2)
+    pos_reward1 = 1.0 / (1.0 + 1.5 * dist1 * dist1)  # humanoid1 和 ball2 之间的奖励
+
+    # ball2 velocity change
+    ball2_velocity_x = ball2_root_states[..., 7]
+    # ball2_velocity_z = ball2_root_states[..., 9]
+    velocity_reward = torch.zeros_like(ball2_velocity_x)
+    condition = (pre_ball2_velocity_x < 0) & (ball2_velocity_x > 0)
+    
+    # 如果还没有记录过速度变化，则增加奖励
+    velocity_reward = torch.where(
+        condition & ~condition_calculated,  # 条件：速度变化且未计算过奖励
+        alpha * torch.abs(ball2_velocity_x),  # 满足条件时，给予奖励
+        velocity_reward  # 不满足条件时，保持原值
+    )
+
+    # 更新 condition_calculated 标志张量
+    condition_calculated |= condition
+
+    # 检测球是否未击中球拍
+    ball_x = ball2_root_state_position[..., 0]
+    # paddle_x = humanoid1_paddle_position[..., 0]
+    humanoid_x = humanoid1_root_states[..., 0]
+    missed_ball = ball_x < humanoid_x - 0.05  # 球的 x 位置小于球拍的 x 位置
+    # 给予惩罚
+    # penalty = -10.0  # 自定义惩罚值
+    reward1 = torch.zeros_like(ball2_velocity_x)
+    reward1 = torch.where(missed_ball, reward1 + penalty, reward1)
+
+    # 如果球击中对面球桌，给予奖励
+    hit_reward = torch.zeros_like(ball2_velocity_x)
+
+    # 检查球的速度是否从负变正（是否反弹）
+    # bounce_up = (pre_ball2_velocity_z < 0) & (ball2_velocity_z > 0)
+    # bounce_up = (pre_ball2_velocity_z < 0) & (ball2_velocity_z > 0) & (ball2_velocity_x > 0)
+    # 2.23 11.03改 用速度判断的话帧跟不上，改用位置判断
+    bounce_up = (ball2_root_state_position[:, 2] < 0.83) & (ball2_velocity_x > 0)
+
+    # 如果球在 ball_position_x < 2.2 时击中球桌，则给予惩罚
+    hit_reward = torch.where(
+        (ball2_root_state_position[:, 0] < 2.2) & bounce_up & ~reward_calculated,  # 条件：在 2.2 米以下、反弹且未计算过奖励
+        not_hit_table_penalty,  # 满足条件时，给予惩罚
+        hit_reward         # 不满足条件时，保持原值
+    )
+    reward_calculated |= (ball2_root_state_position[:, 0] < 2.2) & bounce_up  # 更新标志张量
+
+    # 更新 no_bounce_before_half_mask
+    # 如果球在 ball_position_x < 2.2 时没有反弹，则掩码为 True
+    no_bounce_before_half_mask &= ~((ball2_root_state_position[:, 0] < 2.2) & bounce_up)
+
+    # 检查球是否在对面球桌的范围内
+    in_table_range = (ball2_root_state_position[:, 0] > 2.2) & (ball2_root_state_position[:, 0] < 3.1)
+    # 如果球在 2.2-3.1 米范围内击中球桌，且在2.2米之前未击中球桌，则给予奖励
+    hit_reward = torch.where(
+        in_table_range & bounce_up & no_bounce_before_half_mask & ~reward_calculated,  # 条件：在范围内、反弹且未计算过奖励
+        hit_table_reward,  # 满足条件时，给予奖励
+        hit_reward         # 不满足条件时，保持原值
+    )
+    reward_calculated |= in_table_range & bounce_up & no_bounce_before_half_mask  # 更新标志张量
+    
+    # 如果球超过 3.1 米仍未击中球桌，则给予惩罚
+    hit_reward = torch.where(
+        (ball2_root_state_position[:, 0] >= 3.1) & (ball2_velocity_x > 0) & ~reward_calculated,  # 条件：超过 3.1 米且未计算过奖励
+        not_hit_table_penalty,  # 满足条件时，给予惩罚
+        hit_reward         # 不满足条件时，保持原值
+    )
+    reward_calculated |= ball2_root_state_position[:, 0] >= 3.1  # 更新标志张量
+
+    if (in_table_range & bounce_up & no_bounce_before_half_mask).any():
+        print("the sum of the envs which hit the table: ", (hit_reward > 0).sum())
+
+    # 2/23 11：50 增加过网的reward
+    corss_net_reward = torch.zeros_like(ball2_velocity_x)
+    # in_net_range = (ball2_root_state_position[:, 0] > 1.74) & (ball2_root_state_position[:, 0] < 1.76)
+    # cross_net_condition = in_net_range & (ball2_velocity_x > 0) & (ball2_root_state_position[:, 2] > 1.0)
+    # corss_net_reward[cross_net_condition] = 100
+    # 检查条件
+    over_net_condition = (
+        (ball2_root_state_position[:, 0] > 1.74) &  # x 方向位置 > 1.74
+        (ball2_root_state_position[:, 0] < 1.76) &  # x 方向位置 < 1.76
+        (ball2_velocity_x > 0) &                     # x 方向速度 > 0
+        (ball2_root_state_position[:, 2] > 1) &       # z 方向位置 > 1
+        (ball2_root_state_position[:, 2] < 1.3)       # z 方向位置 < 1.3
+    )
+
+    if (over_net_condition).any():
+        print("the sum of the envs which cross the net: ", (over_net_condition).sum())
+
+    # 分配过网奖励
+    corss_net_reward = torch.where(
+        over_net_condition,        # 条件：满足过网条件
+        100,                       # 满足条件时，给予过网奖励
+        corss_net_reward           # 不满足条件时，保持原值
+    )
+
+    power = torch.abs(torch.multiply(dof_force_tensor, dof_vel)).sum(dim=-1)
+    power_reward = -power_coefficient * power
+    # power_reward[progress_buf <= 3] = 0  # First 3 frame power reward should not be counted. since they could be dropped.
+
+
+    # all rewards
+    reward1 += pos_reward1 + power_reward + velocity_reward + hit_reward + corss_net_reward  # + progress_reward + alive_reward(if not missing the ball); - penalty(if missing the ball)
+    
+    # reward1 = torch.where(missed_ball, reward1 + penalty, reward1 + alive_reward + progress_reward)
+
+    # 重置条件
+    ones = torch.ones_like(reset_buf) # 全1
+    die = torch.zeros_like(reset_buf) # 全0
+
+    # # 如果球未击中球拍，在第一帧后重置
+    # die = torch.where(missed_ball, ones, die)
+    
+    # 如果ball1和ball2掉到地面下，需要重置
+    die = torch.where((ball2_root_state_position[..., 2] < threshold), ones, die)
+    
+    reset = torch.where(progress_buf >= max_episode_length - 1, ones, die)
+    # print("reset:", reset)
+    # if reset.any():
+    #     print("resetting envs")
+    
+    return reward1, reset
+
+# @torch.jit.script
 def compute_pingpong_reward(
     humanoid1_root_states, 
     humanoid1_paddle_rb_states, 
@@ -1112,9 +1278,11 @@ def compute_pingpong_reward(
     power_coefficient,
     penalty,
     hit_table_reward,
-    reward_calculated
+    not_hit_table_penalty,
+    reward_calculated,
+    no_bounce_before_half_mask
     ):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, Tensor) -> Tuple[Tensor, Tensor]
+    # # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, float, float, Tensor, Tensor) -> Tuple[Tensor, Tensor]
     
     threshold = 0.1  # 乒乓球掉落高度阈值
     # alpha = 10  # 乒乓球反方向速度奖励系数
@@ -1134,17 +1302,17 @@ def compute_pingpong_reward(
     # humanoid1_position_x = humanoid1_root_states[..., 0]
     # front_reward = 1.0 / (1.0 + torch.abs(ball2_position_x - humanoid1_position_x))
 
-    # dist1 = torch.sqrt((humanoid1_paddle_position[..., 0] - ball2_root_state_position[..., 0]) ** 2 +
-    #                     (humanoid1_paddle_position[..., 1] - ball2_root_state_position[..., 1]) ** 2 +
-    #                     (humanoid1_paddle_position[..., 2] - ball2_root_state_position[..., 2]) ** 2)
-    # pos_reward1 = 1.0 / (1.0 + 1.5 * dist1 * dist1)  # humanoid1 和 ball2 之间的奖励
+    dist1 = torch.sqrt((humanoid1_paddle_position[..., 0] - ball2_root_state_position[..., 0]) ** 2 +
+                        (humanoid1_paddle_position[..., 1] - ball2_root_state_position[..., 1]) ** 2 +
+                        (humanoid1_paddle_position[..., 2] - ball2_root_state_position[..., 2]) ** 2)
+    pos_reward1 = 1.0 / (1.0 + 1.5 * dist1 * dist1)  # humanoid1 和 ball2 之间的奖励
     
     # pos_reward尽量设计在(0,1)之间
-    dist1 = torch.sqrt((humanoid1_paddle_position[..., 1] - ball2_root_state_position[..., 1]) ** 2 +
-                        (humanoid1_paddle_position[..., 2] - ball2_root_state_position[..., 2]) ** 2)
+    # dist1 = torch.sqrt((humanoid1_paddle_position[..., 1] - ball2_root_state_position[..., 1]) ** 2 +
+    #                     (humanoid1_paddle_position[..., 2] - ball2_root_state_position[..., 2]) ** 2)
 
-    # # Gauss
-    pos_reward1 = 1.0 * torch.exp(-20 * dist1 * dist1)
+    # # # Gauss
+    # pos_reward1 = 1.0 * torch.exp(-20 * dist1 * dist1)
 
     # for i in range(len(pos_reward1)):
     #     if ball2_root_state_position[i, 0] > 1.75:
@@ -1156,6 +1324,10 @@ def compute_pingpong_reward(
     # print("if ball2_velocity_x == prev_ball2_velocity_x: ", (ball2_velocity_x == pre_ball2_velocity_x).sum())
     velocity_reward = torch.zeros_like(ball2_velocity_x)
     condition = (pre_ball2_velocity_x < 0) & (ball2_velocity_x > 0)
+    
+    if condition.any():
+        print("the sum of the ball which hit the paddle: ", condition.sum())
+
     velocity_reward[condition] = alpha * torch.abs(ball2_velocity_x[condition])
 
     # for i in range(len(ball2_velocity_x)):
@@ -1172,47 +1344,30 @@ def compute_pingpong_reward(
     # 检查球的速度是否从负变正（是否反弹）
     bounce_up = (pre_ball2_velocity_z < 0) & (ball2_velocity_z > 0)
 
+    # 更新 no_bounce_before_half_mask
+    # 如果球在 ball_position_x < 2.2 时没有反弹，则掩码为 True
+    no_bounce_before_half_mask &= ~((ball2_root_state_position[:, 0] < 2.2) & bounce_up)
+    print("no_bounce_before_half_mask: ", no_bounce_before_half_mask)
+    # no_bounce_before_half = (ball2_root_state_position[:, 0] < 2.2) & ~bounce_up
+
     # 如果球在 2.2-3.1 米范围内击中球桌，则给予奖励
     hit_reward = torch.where(
-        in_table_range & bounce_up & ~reward_calculated,  # 条件：在范围内、反弹且未计算过奖励
+        in_table_range & bounce_up & no_bounce_before_half_mask & ~reward_calculated,  # 条件：在范围内、反弹且未计算过奖励
         hit_table_reward,  # 满足条件时，给予奖励
         hit_reward         # 不满足条件时，保持原值
     )
-    reward_calculated |= in_table_range & bounce_up  # 更新标志张量
+    reward_calculated |= in_table_range & bounce_up & no_bounce_before_half_mask  # 更新标志张量
     
-    if (in_table_range & bounce_up).any():
-        print("!!!!!!!!!!!!Wrong!!!!!!!!!!")
-
+    if (in_table_range & bounce_up & no_bounce_before_half_mask).any():
+        print("the sum of the envs which hit the table: ", (hit_reward > 0).sum())
     # 如果球超过 3.1 米仍未击中球桌，则给予惩罚
     hit_reward = torch.where(
         (ball2_root_state_position[:, 0] >= 3.1) & (ball2_velocity_x > 0) & ~reward_calculated,  # 条件：超过 3.1 米且未计算过奖励
-        -hit_table_reward,  # 满足条件时，给予惩罚
+        not_hit_table_penalty,  # 满足条件时，给予惩罚
         hit_reward         # 不满足条件时，保持原值
     )
     reward_calculated |= ball2_root_state_position[:, 0] >= 3.1  # 更新标志张量
-    # if(ball2_root_state_position[:, 0] >= 3.1).any():
-    #     # print("reward_calculated:", reward_calculated)
-    #     # print("hit_reward:", hit_reward)
-    if(hit_reward.sum() < 0):
-        print(hit_reward.sum())
-    # print("hit_reward:", hit_reward)
-    # print("reward_calculated:", reward_calculated)
-        
-    
-    # # 检查球是否在对面球桌的范围内
-    # in_table_range = (ball2_root_state_position[:, 0] > 2.2) & (ball2_root_state_position[:, 0] < 3.1)
-    # # 检查球的速度是否从负变正
-    # bounce_up = (pre_ball2_velocity_z < 0) & (ball2_velocity_z > 0)
-    # hit_reward = torch.where(in_table_range & bounce_up, hit_table_reward, 0.0)
-    
-    # hit_reward = torch.zeros_like(-hit_table_reward) 
-    # for i in range(len(ball2_root_state_position)):
-    #     if ball2_root_state_position[i, 0] > 2.2 and ball2_root_state_position[i, 0] < 3.1:  #and ball2_velocity_x[i] > 0:
-    #         if pre_ball2_velocity_z[i] < 0 and ball2_velocity_z[i] > 0:
-    #             hit_reward[i] = hit_table_reward
-    # hit_reward = torch.where(hit_table_reward > 0, hit_table_reward, -hit_table_reward)
 
-    # power_coefficient = 0.002  #0.0005
     power = torch.abs(torch.multiply(dof_force_tensor, dof_vel)).sum(dim=-1)
     power_reward = -power_coefficient * power
     # power_reward[progress_buf <= 3] = 0  # First 3 frame power reward should not be counted. since they could be dropped.
