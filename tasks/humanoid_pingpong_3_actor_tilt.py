@@ -1102,7 +1102,7 @@ class HumanoidPingpongTilt(VecTask):
 ###=========================jit functions=========================###
 #####################################################################
 
-@torch.jit.script
+# @torch.jit.script
 def compute_pingpong_reward_nv(
     humanoid1_root_states, 
     humanoid1_paddle_rb_states, 
@@ -1120,7 +1120,7 @@ def compute_pingpong_reward_nv(
     reward_calculated,
     no_bounce_before_half_mask
     ):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, Tensor, float, float, Tensor, Tensor) -> Tuple[Tensor, Tensor]
+    # # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, float, float, float, Tensor, float, float, Tensor, Tensor) -> Tuple[Tensor, Tensor]
     
     threshold = 0.1  # 乒乓球掉落高度阈值
     # alpha = 10  # 乒乓球反方向速度奖励系数
@@ -1179,29 +1179,31 @@ def compute_pingpong_reward_nv(
     # bounce_up = (pre_ball2_velocity_z < 0) & (ball2_velocity_z > 0)
     # bounce_up = (pre_ball2_velocity_z < 0) & (ball2_velocity_z > 0) & (ball2_velocity_x > 0)
     # 2.23 11.03改 用速度判断的话帧跟不上，改用位置判断
-    bounce_up = (ball2_root_state_position[:, 2] < 0.83) & (ball2_velocity_x > 0)
+    # bounce_up = (ball2_root_state_position[:, 2] < 0.83) & (ball2_velocity_x > 0)
+    # 2.23 17:00 改： 增加y方向上的位置限制，防止球往旁边掉
+    bounce_up = (ball2_root_state_position[:, 2] < 0.83) & (ball2_velocity_x > 0) & (ball2_root_state_position[:, 1] < 0.6) & (ball2_root_state_position[:, 1] > -0.6)
 
-    # 如果球在 ball_position_x < 2.2 时击中球桌，则给予惩罚
+    # 如果球在 ball_position_x < 2.44 时击中球桌，则给予惩罚
     hit_reward = torch.where(
-        (ball2_root_state_position[:, 0] < 2.2) & bounce_up & ~reward_calculated,  # 条件：在 2.2 米以下、反弹且未计算过奖励
+        (ball2_root_state_position[:, 0] < 2.44) & bounce_up & ~reward_calculated,  # 条件：在 2.44 米以下、反弹且未计算过奖励
         not_hit_table_penalty,  # 满足条件时，给予惩罚
         hit_reward         # 不满足条件时，保持原值
     )
-    reward_calculated |= (ball2_root_state_position[:, 0] < 2.2) & bounce_up  # 更新标志张量
+    reward_calculated |= (ball2_root_state_position[:, 0] < 2.44) & bounce_up  # 更新标志张量
 
     # 更新 no_bounce_before_half_mask
-    # 如果球在 ball_position_x < 2.2 时没有反弹，则掩码为 True
-    no_bounce_before_half_mask &= ~((ball2_root_state_position[:, 0] < 2.2) & bounce_up)
+    # 如果球在 ball_position_x < 2.44 时没有反弹，则掩码为 True
+    no_bounce_before_half_mask &= ~((ball2_root_state_position[:, 0] < 2.44) & bounce_up)
 
     # 检查球是否在对面球桌的范围内
-    in_table_range = (ball2_root_state_position[:, 0] > 2.2) & (ball2_root_state_position[:, 0] < 3.1)
-    # 如果球在 2.2-3.1 米范围内击中球桌，且在2.2米之前未击中球桌，则给予奖励
+    in_table_x_range = (ball2_root_state_position[:, 0] > 2.44) & (ball2_root_state_position[:, 0] < 3.1)
+    # 如果球在 2.44-3.1 米范围内击中球桌，且在2.44米之前未击中球桌，则给予奖励
     hit_reward = torch.where(
-        in_table_range & bounce_up & no_bounce_before_half_mask & ~reward_calculated,  # 条件：在范围内、反弹且未计算过奖励
+        in_table_x_range & bounce_up & no_bounce_before_half_mask & ~reward_calculated,  # 条件：在范围内、反弹且未计算过奖励
         hit_table_reward,  # 满足条件时，给予奖励
         hit_reward         # 不满足条件时，保持原值
     )
-    reward_calculated |= in_table_range & bounce_up & no_bounce_before_half_mask  # 更新标志张量
+    reward_calculated |= in_table_x_range & bounce_up & no_bounce_before_half_mask  # 更新标志张量
     
     # 如果球超过 3.1 米仍未击中球桌，则给予惩罚
     hit_reward = torch.where(
@@ -1211,21 +1213,24 @@ def compute_pingpong_reward_nv(
     )
     reward_calculated |= ball2_root_state_position[:, 0] >= 3.1  # 更新标志张量
 
-    if (in_table_range & bounce_up & no_bounce_before_half_mask).any():
+    if (in_table_x_range & bounce_up & no_bounce_before_half_mask).any():
         print("the sum of the envs which hit the table: ", (hit_reward > 0).sum())
 
     # 2/23 11：50 增加过网的reward
+    # 2/23 17:15 尝试把过网的reward设高一点
     corss_net_reward = torch.zeros_like(ball2_velocity_x)
     # in_net_range = (ball2_root_state_position[:, 0] > 1.74) & (ball2_root_state_position[:, 0] < 1.76)
     # cross_net_condition = in_net_range & (ball2_velocity_x > 0) & (ball2_root_state_position[:, 2] > 1.0)
     # corss_net_reward[cross_net_condition] = 100
     # 检查条件
     over_net_condition = (
-        (ball2_root_state_position[:, 0] > 1.74) &  # x 方向位置 > 1.74
-        (ball2_root_state_position[:, 0] < 1.76) &  # x 方向位置 < 1.76
+        (ball2_root_state_position[:, 0] > 1.7) &  # x 方向位置 > 1.7
+        (ball2_root_state_position[:, 0] < 1.8) &  # x 方向位置 < 1.8
         (ball2_velocity_x > 0) &                     # x 方向速度 > 0
-        (ball2_root_state_position[:, 2] > 1) &       # z 方向位置 > 1
-        (ball2_root_state_position[:, 2] < 1.3)       # z 方向位置 < 1.3
+        (ball2_root_state_position[:, 1] < 0.4) &       # y 方向位置 < 0.6
+        (ball2_root_state_position[:, 1] > -0.4) &      # y 方向位置 > -0.6
+        (ball2_root_state_position[:, 2] > 0.98) &       # z 方向位置 > 0.98
+        (ball2_root_state_position[:, 2] < 1.14)       # z 方向位置 < 1.14
     )
 
     if (over_net_condition).any():
@@ -1234,14 +1239,13 @@ def compute_pingpong_reward_nv(
     # 分配过网奖励
     corss_net_reward = torch.where(
         over_net_condition,        # 条件：满足过网条件
-        100,                       # 满足条件时，给予过网奖励
+        400,                       # 满足条件时，给予过网奖励
         corss_net_reward           # 不满足条件时，保持原值
     )
 
     power = torch.abs(torch.multiply(dof_force_tensor, dof_vel)).sum(dim=-1)
     power_reward = -power_coefficient * power
     # power_reward[progress_buf <= 3] = 0  # First 3 frame power reward should not be counted. since they could be dropped.
-
 
     # all rewards
     reward1 += pos_reward1 + power_reward + velocity_reward + hit_reward + corss_net_reward  # + progress_reward + alive_reward(if not missing the ball); - penalty(if missing the ball)
