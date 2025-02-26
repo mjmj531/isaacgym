@@ -47,7 +47,10 @@ from .allegro_hand import AllegroHand
 from .dextreme.allegro_hand_dextreme import AllegroHandDextremeManualDR, AllegroHandDextremeADR
 from .trifinger import Trifinger
 from .humanoid_interos_edit_pingpong_only_3_actor import HumanoidPingpong
-
+from .humanoid_pingpong_3_actor_tilt import HumanoidPingpongTilt
+from .humanoid_pingpong_3_actor_tilt_gauss_paddle_ft import HumanoidPingpongTiltGaussFT
+from .humanoid_pingpong_4_actor_tilt import Humanoid12PingpongTilt
+from .humanoid_pingpong_3_actor_tilt_no_earlystop import HumanoidPingpongTiltNoEarlyStop
 from .allegro_kuka.allegro_kuka_reorientation import AllegroKukaReorientation
 from .allegro_kuka.allegro_kuka_regrasping import AllegroKukaRegrasping
 from .allegro_kuka.allegro_kuka_throw import AllegroKukaThrow
@@ -113,4 +116,8 @@ isaacgym_task_map = {
     "ShadowHand": ShadowHand,
     "Trifinger": Trifinger,
     "HumanoidPingpongG1": HumanoidPingpong,
+    "HumanoidPingpongTiltG1": HumanoidPingpongTilt,
+    "HumanoidPingpongTiltNoEarlyStopG1": HumanoidPingpongTiltNoEarlyStop,
+    "HumanoidPingpongTiltGaussFTG1": HumanoidPingpongTiltGaussFT,
+    "Humanoid12PingpongTiltG1": Humanoid12PingpongTilt,
 }
